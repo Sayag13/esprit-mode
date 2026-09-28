@@ -31,6 +31,7 @@ if (!db.prepare('SELECT id FROM users LIMIT 1').get()) db.prepare('INSERT INTO u
 if (!db.prepare('SELECT id FROM rewards LIMIT 1').get()) db.prepare('INSERT INTO rewards(name,points_cost,value_cents) VALUES(?,?,?)').run('Bon de 10 €', 100, 1000);
 
 function hash(p){ return crypto.createHash('sha256').update(String(p)).digest('hex'); }
+function normalizePhone(value){ return String(value || '').replace(/\s+/g,'').replace(/[().-]/g,''); }
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health',(req,res)=>res.json({ok:true,service:'esprit-mode'}));
@@ -50,12 +51,18 @@ function publicUrl(token, req){
 // Public customer registration
 app.post('/api/public/register', (req,res)=>{
  const {first_name,last_name,phone,email='',birth_date='',marketing_email=0,marketing_sms=0}=req.body||{};
- if(!first_name||!last_name||!phone) return res.status(400).json({error:'Prénom, nom et téléphone sont obligatoires'});
+ const cleanPhone=normalizePhone(phone);
+ if(!first_name||!last_name||!cleanPhone) return res.status(400).json({error:'Prénom, nom et téléphone sont obligatoires'});
  try {
   const token=crypto.randomBytes(18).toString('hex');
-  const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name.trim(),last_name.trim(),phone.trim(),email.trim(),birth_date,!!marketing_email,!!marketing_sms,token);
+  const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name.trim(),last_name.trim(),cleanPhone,email.trim(),birth_date,!!marketing_email,!!marketing_sms,token);
   res.json({token, customer: db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE id=?').get(info.lastInsertRowid)});
- } catch(e){ res.status(409).json({error:'Ce numéro de téléphone est déjà enregistré. Demandez à la boutique de retrouver votre carte.'}); }
+ } catch(e){
+  const existing=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(cleanPhone);
+  if(existing) return res.status(409).json({error:'Ce numéro de téléphone est déjà enregistré. Demandez à la boutique de retrouver votre carte.',customer:existing});
+  console.error('register error', e);
+  res.status(500).json({error:'Impossible de créer la carte pour le moment.'});
+ }
 });
 app.get('/api/public/customer/token/:token',(req,res)=>{
  const c=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token,created_at FROM customers WHERE public_token=?').get(req.params.token);
@@ -64,16 +71,21 @@ app.get('/api/public/customer/token/:token',(req,res)=>{
  const rewards=db.prepare('SELECT id,name,points_cost,value_cents FROM rewards WHERE active=1 ORDER BY points_cost').all();
  res.json({customer:c,history,rewards});
 });
-app.get('/api/public/customer/:phone',(req,res)=>{ const c=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(req.params.phone); if(!c)return res.status(404).json({error:'Cliente introuvable'}); res.json(c); });
+app.get('/api/public/customer/:phone',(req,res)=>{ const c=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(normalizePhone(req.params.phone)); if(!c)return res.status(404).json({error:'Cliente introuvable'}); res.json(c); });
 
 app.post('/api/customers',auth,(req,res)=>{
  const {first_name,last_name,phone,email='',birth_date='',marketing_email=0,marketing_sms=0}=req.body;
- if(!first_name||!last_name||!phone) return res.status(400).json({error:'Prénom, nom et téléphone obligatoires'});
- try{ const token=crypto.randomBytes(18).toString('hex'); const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name,last_name,phone,email,birth_date,!!marketing_email,!!marketing_sms,token); res.json(db.prepare('SELECT * FROM customers WHERE id=?').get(info.lastInsertRowid)); } catch(e){res.status(409).json({error:'Ce numéro existe déjà'});}
+ const cleanPhone=normalizePhone(phone);
+ if(!first_name||!last_name||!cleanPhone) return res.status(400).json({error:'Prénom, nom et téléphone obligatoires'});
+ try{ const token=crypto.randomBytes(18).toString('hex'); const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name.trim(),last_name.trim(),cleanPhone,email.trim(),birth_date,!!marketing_email,!!marketing_sms,token); res.json(db.prepare('SELECT * FROM customers WHERE id=?').get(info.lastInsertRowid)); } catch(e){
+  const existing=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(cleanPhone);
+  if(existing) return res.status(409).json({error:'Ce numéro existe déjà',customer:existing});
+  console.error('customer creation error', e);
+  res.status(500).json({error:'Impossible de créer la cliente pour le moment'});
+}
 });
 app.get('/api/customers',auth,(req,res)=>{ const q=(req.query.q||'').trim(); const rows=q?db.prepare(`SELECT * FROM customers WHERE first_name LIKE ? OR last_name LIKE ? OR phone LIKE ? OR email LIKE ? ORDER BY last_name,first_name LIMIT 100`).all(`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`):db.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 100').all(); res.json(rows); });
 app.get('/api/customers/:id/history',auth,(req,res)=>res.json(db.prepare('SELECT id,amount_cents/100.0 AS amount,points,created_at FROM purchases WHERE customer_id=? ORDER BY created_at DESC').all(req.params.id)));
-app.delete('/api/customers/:id',auth,adminOnly,(req,res)=>{ const id=Number(req.params.id); const c=db.prepare('SELECT id FROM customers WHERE id=?').get(id); if(!c)return res.status(404).json({error:'Cliente introuvable'}); const tx=db.transaction(()=>{ db.prepare('DELETE FROM purchases WHERE customer_id=?').run(id); db.prepare('DELETE FROM redemptions WHERE customer_id=?').run(id); db.prepare('DELETE FROM customers WHERE id=?').run(id); }); tx(); res.json({ok:true}); });
 app.post('/api/purchases',auth,(req,res)=>{
  const {customer_id,amount}=req.body; const cents=Math.round(Number(amount)*100); if(!customer_id||!Number.isFinite(cents)||cents<=0)return res.status(400).json({error:'Montant invalide'}); const points=Math.floor(cents/100);
  const tx=db.transaction(()=>{db.prepare('INSERT INTO purchases(customer_id,amount_cents,points) VALUES(?,?,?)').run(customer_id,cents,points); db.prepare('UPDATE customers SET points=points+? WHERE id=?').run(points,customer_id);}); tx(); res.json(db.prepare('SELECT * FROM customers WHERE id=?').get(customer_id));
