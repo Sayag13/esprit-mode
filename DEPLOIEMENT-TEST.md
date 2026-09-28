@@ -29,7 +29,3 @@ Compte initial :
 
 ## Attention — phase de test
 Le plan gratuit Render convient au test, mais le service s'arrête après une période d'inactivité et son système de fichiers local est éphémère. SQLite ne doit donc pas être utilisé comme stockage définitif sur ce plan. Pour le lancement réel, migrer la base vers un stockage persistant.
-
-
-## Test v0.7
-Après déploiement, tester : création d’une cliente fictive, affichage du compteur Clientes, puis enregistrement d’un achat.

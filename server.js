@@ -2,7 +2,7 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const path = require('path');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const QRCode = require('qrcode');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,15 +25,12 @@ CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username
 CREATE TABLE IF NOT EXISTS rewards (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, points_cost INTEGER NOT NULL, value_cents INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS redemptions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL, reward_id INTEGER NOT NULL, points_used INTEGER NOT NULL, value_cents INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(customer_id) REFERENCES customers(id), FOREIGN KEY(reward_id) REFERENCES rewards(id));
 `);
-const cols = db.prepare('PRAGMA table_info(customers)').all().map(c => c.name);
-if (!cols.includes('public_token')) { db.exec('ALTER TABLE customers ADD COLUMN public_token TEXT'); }
-try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_public_token ON customers(public_token)'); } catch(e) { console.error('public_token index migration:', e.message); }
-for (const c of db.prepare('SELECT id FROM customers WHERE public_token IS NULL OR public_token = ''').all()) db.prepare('UPDATE customers SET public_token=? WHERE id=?').run(crypto.randomBytes(18).toString('hex'), c.id);
+try { db.prepare('ALTER TABLE customers ADD COLUMN public_token TEXT UNIQUE').run(); } catch(e) {}
+for (const c of db.prepare('SELECT id FROM customers WHERE public_token IS NULL').all()) db.prepare('UPDATE customers SET public_token=? WHERE id=?').run(crypto.randomBytes(18).toString('hex'), c.id);
 if (!db.prepare('SELECT id FROM users LIMIT 1').get()) db.prepare('INSERT INTO users(username,password_hash,role) VALUES(?,?,?)').run('admin', hash(process.env.ADMIN_PASSWORD || 'changer-moi'), 'admin');
 if (!db.prepare('SELECT id FROM rewards LIMIT 1').get()) db.prepare('INSERT INTO rewards(name,points_cost,value_cents) VALUES(?,?,?)').run('Bon de 10 €', 100, 1000);
 
 function hash(p){ return crypto.createHash('sha256').update(String(p)).digest('hex'); }
-function normalizePhone(value){ return String(value || '').replace(/[^0-9+]/g,''); }
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health',(req,res)=>res.json({ok:true,service:'esprit-mode'}));
@@ -53,18 +50,12 @@ function publicUrl(token, req){
 // Public customer registration
 app.post('/api/public/register', (req,res)=>{
  const {first_name,last_name,phone,email='',birth_date='',marketing_email=0,marketing_sms=0}=req.body||{};
- const cleanPhone=normalizePhone(phone);
- if(!first_name||!last_name||!cleanPhone) return res.status(400).json({error:'Prénom, nom et téléphone sont obligatoires'});
+ if(!first_name||!last_name||!phone) return res.status(400).json({error:'Prénom, nom et téléphone sont obligatoires'});
  try {
   const token=crypto.randomBytes(18).toString('hex');
-  const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name.trim(),last_name.trim(),cleanPhone,email.trim(),birth_date,!!marketing_email,!!marketing_sms,token);
+  const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name.trim(),last_name.trim(),phone.trim(),email.trim(),birth_date,!!marketing_email,!!marketing_sms,token);
   res.json({token, customer: db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE id=?').get(info.lastInsertRowid)});
- } catch(e){
-  const existing=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(cleanPhone);
-  if(existing) return res.status(409).json({error:'Ce numéro de téléphone est déjà enregistré. Demandez à la boutique de retrouver votre carte.',customer:existing});
-  console.error('register error', e);
-  res.status(500).json({error:'Impossible de créer la carte pour le moment.'});
- }
+ } catch(e){ res.status(409).json({error:'Ce numéro de téléphone est déjà enregistré. Demandez à la boutique de retrouver votre carte.'}); }
 });
 app.get('/api/public/customer/token/:token',(req,res)=>{
  const c=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token,created_at FROM customers WHERE public_token=?').get(req.params.token);
@@ -73,18 +64,12 @@ app.get('/api/public/customer/token/:token',(req,res)=>{
  const rewards=db.prepare('SELECT id,name,points_cost,value_cents FROM rewards WHERE active=1 ORDER BY points_cost').all();
  res.json({customer:c,history,rewards});
 });
-app.get('/api/public/customer/:phone',(req,res)=>{ const c=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(normalizePhone(req.params.phone)); if(!c)return res.status(404).json({error:'Cliente introuvable'}); res.json(c); });
+app.get('/api/public/customer/:phone',(req,res)=>{ const c=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(req.params.phone); if(!c)return res.status(404).json({error:'Cliente introuvable'}); res.json(c); });
 
 app.post('/api/customers',auth,(req,res)=>{
  const {first_name,last_name,phone,email='',birth_date='',marketing_email=0,marketing_sms=0}=req.body;
- const cleanPhone=normalizePhone(phone);
- if(!first_name||!last_name||!cleanPhone) return res.status(400).json({error:'Prénom, nom et téléphone obligatoires'});
- try{ const token=crypto.randomBytes(18).toString('hex'); const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name.trim(),last_name.trim(),cleanPhone,email.trim(),birth_date,!!marketing_email,!!marketing_sms,token); res.json(db.prepare('SELECT * FROM customers WHERE id=?').get(info.lastInsertRowid)); } catch(e){
-  const existing=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(cleanPhone);
-  if(existing) return res.status(409).json({error:'Ce numéro existe déjà',customer:existing});
-  console.error('customer creation error', e);
-  res.status(500).json({error:'Impossible de créer la cliente pour le moment', code:e && e.code ? e.code : 'UNKNOWN'});
-}
+ if(!first_name||!last_name||!phone) return res.status(400).json({error:'Prénom, nom et téléphone obligatoires'});
+ try{ const token=crypto.randomBytes(18).toString('hex'); const info=db.prepare(`INSERT INTO customers(first_name,last_name,phone,email,birth_date,marketing_email,marketing_sms,public_token) VALUES(?,?,?,?,?,?,?,?)`).run(first_name,last_name,phone,email,birth_date,!!marketing_email,!!marketing_sms,token); res.json(db.prepare('SELECT * FROM customers WHERE id=?').get(info.lastInsertRowid)); } catch(e){res.status(409).json({error:'Ce numéro existe déjà'});}
 });
 app.get('/api/customers',auth,(req,res)=>{ const q=(req.query.q||'').trim(); const rows=q?db.prepare(`SELECT * FROM customers WHERE first_name LIKE ? OR last_name LIKE ? OR phone LIKE ? OR email LIKE ? ORDER BY last_name,first_name LIMIT 100`).all(`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`):db.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 100').all(); res.json(rows); });
 app.get('/api/customers/:id/history',auth,(req,res)=>res.json(db.prepare('SELECT id,amount_cents/100.0 AS amount,points,created_at FROM purchases WHERE customer_id=? ORDER BY created_at DESC').all(req.params.id)));
@@ -99,6 +84,6 @@ app.get('/api/stats',auth,(req,res)=>{const customers=db.prepare('SELECT COUNT(*
 app.get('/api/export.csv',auth,(req,res)=>{const rows=db.prepare('SELECT first_name,last_name,phone,email,birth_date,points,created_at FROM customers ORDER BY last_name,first_name').all();const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';const csv='\ufeff'+['Prénom;Nom;Téléphone;E-mail;Date de naissance;Points;Inscription',...rows.map(r=>[r.first_name,r.last_name,r.phone,r.email,r.birth_date,r.points,r.created_at].map(esc).join(';'))].join('\n');res.set('Content-Type','text/csv; charset=utf-8').set('Content-Disposition','attachment; filename="esprit-mode-clientes.csv"').send(csv);});
 app.get('/api/users',auth,adminOnly,(req,res)=>res.json(db.prepare('SELECT id,username,role FROM users ORDER BY username').all()));
 app.post('/api/users',auth,adminOnly,(req,res)=>{const {username,password,role='seller'}=req.body;if(!username||!password||!['admin','seller'].includes(role))return res.status(400).json({error:'Identifiants invalides'});try{db.prepare('INSERT INTO users(username,password_hash,role) VALUES(?,?,?)').run(username,hash(password),role);res.json({ok:true});}catch(e){res.status(409).json({error:'Cet utilisateur existe déjà'});}});
-app.get('/api/qr/:id',auth,(req,res)=>{const c=db.prepare('SELECT public_token FROM customers WHERE id=?').get(req.params.id);if(!c)return res.status(404).end();const data=publicUrl(c.public_token, req);const py=`import qrcode,sys; img=qrcode.make(sys.argv[1]); img.save(sys.stdout.buffer,format='PNG')`;const p=spawn('python3',['-c',py,data]);res.type('png');p.stdout.pipe(res);p.stderr.on('data',()=>{});p.on('error',()=>res.status(500).end());});
+app.get('/api/qr/:id',auth,async (req,res)=>{ const c=db.prepare('SELECT public_token FROM customers WHERE id=?').get(req.params.id); if(!c) return res.status(404).end(); const data=publicUrl(c.public_token, req); try { const png=await QRCode.toBuffer(data,{type:'png',width:400,margin:2}); res.type('png').send(png); } catch(e) { res.status(500).json({error:'QR code impossible à générer'}); } });
 
 app.listen(PORT,HOST,()=>console.log(`Esprit Mode: http://${HOST}:${PORT}`));
