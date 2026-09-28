@@ -1,18 +1,74 @@
-const express=require('express');const path=require('path');const crypto=require('crypto');const QRCode=require('qrcode');const fs=require('fs');
-const app=express();const PORT=Number(process.env.PORT||3000),HOST='0.0.0.0';
-const DB_FILE=process.env.DB_FILE||path.join(__dirname,'esprit-mode-data.json');
+const express=require('express');
+const path=require('path');
+const crypto=require('crypto');
+const QRCode=require('qrcode');
+const fs=require('fs');
+const {Pool}=require('pg');
+
+const app=express();
+const PORT=Number(process.env.PORT||3000),HOST='0.0.0.0';
+const DATA_DIR=process.env.DATA_DIR||(fs.existsSync('/var/data')?'/var/data':__dirname);
+try{fs.mkdirSync(DATA_DIR,{recursive:true})}catch(e){console.error('DATA_DIR:',e.message)}
+const DB_FILE=process.env.DB_FILE||path.join(DATA_DIR,'esprit-mode-data.json');
+const DATABASE_URL=String(process.env.DATABASE_URL||'').trim();
+const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false},max:3,idleTimeoutMillis:30000,connectionTimeoutMillis:10000}):null;
+
 let db={customers:[],purchases:[],users:[],rewards:[],redemptions:[],campaigns:[],seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
-try{if(fs.existsSync(DB_FILE))db={...db,...JSON.parse(fs.readFileSync(DB_FILE,'utf8')),seq:{...db.seq,...(JSON.parse(fs.readFileSync(DB_FILE,'utf8')).seq||{})}}}catch(e){console.error('DB read:',e.message)}
-function save(){try{fs.writeFileSync(DB_FILE,JSON.stringify(db,null,2))}catch(e){console.error('DB write:',e.message)}}
-function id(t){return db.seq[t]++}function hash(p){return crypto.createHash('sha256').update(String(p)).digest('hex')}function token(){return crypto.randomBytes(18).toString('hex')}
-if(!db.users.length){db.users.push({id:id('users'),username:'admin',password_hash:hash(process.env.ADMIN_PASSWORD||'changer-moi'),role:'admin',display_name:'Élie'});save()}
-if(!db.rewards.length){db.rewards.push({id:id('rewards'),name:'Bon de 10 €',points_cost:100,value_cents:1000,active:1});save()}
-if(!db.campaigns)db.campaigns=[];save();
-app.use(express.json({limit:'2mb'}));app.use(express.static(path.join(__dirname,'public')));app.get('/health',(q,s)=>s.json({ok:true,service:'esprit-mode',version:'0.7.0'}));
+
+function normalizeDb(x){
+  const base={customers:[],purchases:[],users:[],rewards:[],redemptions:[],campaigns:[],seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
+  const d={...base,...(x||{})};
+  d.customers=Array.isArray(d.customers)?d.customers:[];
+  d.purchases=Array.isArray(d.purchases)?d.purchases:[];
+  d.users=Array.isArray(d.users)?d.users:[];
+  d.rewards=Array.isArray(d.rewards)?d.rewards:[];
+  d.redemptions=Array.isArray(d.redemptions)?d.redemptions:[];
+  d.campaigns=Array.isArray(d.campaigns)?d.campaigns:[];
+  d.seq={...base.seq,...(d.seq||{})};
+  return d;
+}
+
+async function loadDb(){
+  if(pool){
+    await pool.query(`CREATE TABLE IF NOT EXISTS app_state (id integer PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`);
+    const r=await pool.query('SELECT data FROM app_state WHERE id=1');
+    if(r.rows[0]?.data){db=normalizeDb(r.rows[0].data);return;}
+    db=normalizeDb(db);
+    await pool.query('INSERT INTO app_state(id,data) VALUES(1,$1::jsonb) ON CONFLICT(id) DO NOTHING',[JSON.stringify(db)]);
+    return;
+  }
+  try{if(fs.existsSync(DB_FILE))db=normalizeDb(JSON.parse(fs.readFileSync(DB_FILE,'utf8')))}catch(e){console.error('DB read:',e.message)}
+}
+
+function save(){
+  if(pool){
+    pool.query('INSERT INTO app_state(id,data,updated_at) VALUES(1,$1::jsonb,now()) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data,updated_at=now()',[JSON.stringify(db)]).catch(e=>console.error('Postgres write:',e.message));
+    return;
+  }
+  try{fs.writeFileSync(DB_FILE,JSON.stringify(db,null,2))}catch(e){console.error('DB write:',e.message)}
+}
+
+function id(t){return db.seq[t]++}
+function hash(p){return crypto.createHash('sha256').update(String(p)).digest('hex')}
+function token(){return crypto.randomBytes(18).toString('hex')}
+
+async function bootstrap(){
+  await loadDb();
+  let changed=false;
+  if(!db.users.length){db.users.push({id:id('users'),username:'admin',password_hash:hash(process.env.ADMIN_PASSWORD||'changer-moi'),role:'admin',display_name:'Élie'});changed=true}
+  if(!db.rewards.length){db.rewards.push({id:id('rewards'),name:'Bon de 10 €',points_cost:100,value_cents:1000,active:1});changed=true}
+  if(changed)save();
+}
+
+app.use(express.json({limit:'2mb'}));
+app.use(express.static(path.join(__dirname,'public')));
+app.get('/health',(q,s)=>s.json({ok:true,service:'esprit-mode',version:'0.7.2',storage:pool?'postgres':'file'}));
+
 function auth(req,res,next){const h=req.headers.authorization||'';if(!h.startsWith('Basic '))return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Connexion requise'});const raw=Buffer.from(h.slice(6),'base64').toString(),i=raw.indexOf(':'),u=raw.slice(0,i),p=raw.slice(i+1),user=db.users.find(x=>x.username===u&&x.password_hash===hash(p));if(!user)return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Identifiants incorrects'});req.user={id:user.id,username:user.username,role:user.role,display_name:user.display_name||user.username};next()}
 function allow(...roles){return (req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({error:'Accès non autorisé'})}
 const adminOnly=allow('admin'),managerOnly=allow('admin','manager'),salesOnly=allow('admin','manager','seller');
 function publicUrl(t,req){return `${(process.env.PUBLIC_URL||`${req.protocol}://${req.get('host')}`).replace(/\/$/,'')}/carte.html?token=${encodeURIComponent(t)}`}
+
 app.get('/api/me',auth,(req,res)=>res.json({id:req.user.id,username:req.user.username,role:req.user.role,display_name:req.user.display_name}));
 app.post('/api/public/register',(req,res)=>{const x=req.body||{};if(!x.first_name||!x.last_name||!x.phone)return res.status(400).json({error:'Prénom, nom et téléphone sont obligatoires'});if(db.customers.some(c=>c.phone===String(x.phone).trim()))return res.status(409).json({error:'Ce numéro de téléphone est déjà enregistré.'});const c={id:id('customers'),first_name:String(x.first_name).trim(),last_name:String(x.last_name).trim(),phone:String(x.phone).trim(),email:String(x.email||'').trim(),birth_date:String(x.birth_date||''),marketing_email:!!x.marketing_email,marketing_sms:!!x.marketing_sms,points:0,public_token:token(),created_at:new Date().toISOString()};db.customers.push(c);save();res.json({token:c.public_token,customer:c})});
 app.get('/api/public/customer/token/:token',(req,res)=>{const c=db.customers.find(x=>x.public_token===req.params.token);if(!c)return res.status(404).json({error:'Carte introuvable'});res.json({customer:c,history:db.purchases.filter(x=>x.customer_id===c.id).sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,20).map(x=>({...x,amount:x.amount_cents/100})),rewards:db.rewards.filter(x=>x.active)});});
@@ -30,4 +86,5 @@ app.get('/api/qr/:id',auth,salesOnly,async(req,res)=>{const c=db.customers.find(
 app.get('/api/campaigns',auth,managerOnly,(req,res)=>res.json(db.campaigns.sort((a,b)=>b.created_at.localeCompare(a.created_at))));
 app.post('/api/campaigns',auth,managerOnly,(req,res)=>{const x=req.body||{};if(!x.title||!x.message)return res.status(400).json({error:'Titre et message obligatoires'});const c={id:id('campaigns'),title:String(x.title).trim(),message:String(x.message).trim(),media_url:String(x.media_url||'').trim(),channels:{email:!!x.email,sms:!!x.sms,whatsapp:!!x.whatsapp,facebook:!!x.facebook,instagram:!!x.instagram},status:'brouillon',created_at:new Date().toISOString(),created_by:req.user.username};db.campaigns.push(c);save();res.json(c)});
 app.post('/api/campaigns/:id/status',auth,managerOnly,(req,res)=>{const c=db.campaigns.find(x=>x.id===Number(req.params.id));if(!c)return res.status(404).json({error:'Campagne introuvable'});if(!['brouillon','prete'].includes(req.body.status))return res.status(400).json({error:'Statut invalide'});c.status=req.body.status;save();res.json(c)});
-app.listen(PORT,HOST,()=>console.log(`Esprit Mode v0.7.0: http://${HOST}:${PORT}`));
+
+bootstrap().then(()=>app.listen(PORT,HOST,()=>console.log(`Esprit Mode v0.7.2: http://${HOST}:${PORT} storage=${pool?'postgres':'file'}`))).catch(e=>{console.error('Startup:',e);process.exit(1)});

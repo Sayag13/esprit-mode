@@ -1,9 +1,15 @@
 {
   "name": "esprit-mode-fidelite",
-  "version": "0.5.1",
+  "version": "0.7.2",
   "private": true,
   "description": "Application PWA de fidélité Esprit Mode - auto-hébergeable",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "dependencies": { "express": "^5.1.0", "qrcode": "^1.5.4" }
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "qrcode": "^1.5.4",
+    "pg": "^8.16.3"
+  }
 }
