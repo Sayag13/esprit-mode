@@ -13,16 +13,17 @@ const DB_FILE=process.env.DB_FILE||path.join(DATA_DIR,'esprit-mode-data.json');
 const DATABASE_URL=String(process.env.DATABASE_URL||'').trim();
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false},max:3,idleTimeoutMillis:30000,connectionTimeoutMillis:10000}):null;
 
-let db={customers:[],purchases:[],users:[],rewards:[],redemptions:[],campaigns:[],seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
+let db={customers:[],purchases:[],users:[],rewards:[],redemptions:[],loyalty_adjustments:[],campaigns:[],seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
 
 function normalizeDb(x){
-  const base={customers:[],purchases:[],users:[],rewards:[],redemptions:[],campaigns:[],seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
+  const base={customers:[],purchases:[],users:[],rewards:[],redemptions:[],loyalty_adjustments:[],campaigns:[],seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
   const d={...base,...(x||{})};
   d.customers=Array.isArray(d.customers)?d.customers:[];
   d.purchases=Array.isArray(d.purchases)?d.purchases:[];
   d.users=Array.isArray(d.users)?d.users:[];
   d.rewards=Array.isArray(d.rewards)?d.rewards:[];
   d.redemptions=Array.isArray(d.redemptions)?d.redemptions:[];
+  d.loyalty_adjustments=Array.isArray(d.loyalty_adjustments)?d.loyalty_adjustments:[];
   d.campaigns=Array.isArray(d.campaigns)?d.campaigns:[];
   d.seq={...base.seq,...(d.seq||{})};
   return d;
@@ -102,6 +103,9 @@ app.get('/api/public/customer/token/:token',(req,res)=>{const c=db.customers.fin
 app.get('/api/customers',auth,salesOnly,(req,res)=>{const q=String(req.query.q||'').toLowerCase();let a=db.customers;if(q)a=a.filter(c=>[c.first_name,c.last_name,c.phone,c.email].some(v=>String(v).toLowerCase().includes(q)));res.json(a.sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,100))});
 app.post('/api/customers',auth,managerOnly,(req,res)=>{const x=req.body||{};if(!x.first_name||!x.last_name||!x.phone)return res.status(400).json({error:'Prénom, nom et téléphone obligatoires'});if(db.customers.some(c=>c.phone===x.phone))return res.status(409).json({error:'Ce numéro existe déjà'});const c={id:id('customers'),first_name:x.first_name,last_name:x.last_name,phone:x.phone,email:x.email||'',birth_date:x.birth_date||'',marketing_email:!!x.marketing_email,marketing_sms:!!x.marketing_sms,points:0,public_token:token(),created_at:new Date().toISOString()};db.customers.push(c);save();res.json(c)});
 app.get('/api/customers/:id/history',auth,salesOnly,(req,res)=>res.json(db.purchases.filter(x=>x.customer_id===Number(req.params.id)).sort((a,b)=>b.created_at.localeCompare(a.created_at)).map(x=>({...x,amount:x.amount_cents/100}))));
+app.get('/api/customers/:id/profile',auth,managerOnly,(req,res)=>{const idn=Number(req.params.id),c=db.customers.find(x=>x.id===idn);if(!c)return res.status(404).json({error:'Cliente introuvable'});const purchases=db.purchases.filter(x=>x.customer_id===idn).sort((a,b)=>b.created_at.localeCompare(a.created_at));const redemptions=db.redemptions.filter(x=>x.customer_id===idn).sort((a,b)=>b.created_at.localeCompare(a.created_at)).map(x=>({...x,reward_name:db.rewards.find(r=>r.id===x.reward_id)?.name||'Récompense'}));const total_cents=purchases.reduce((n,x)=>n+x.amount_cents,0);res.json({customer:c,stats:{purchases:purchases.length,total_euros:total_cents/100,points:c.points,last_purchase:purchases[0]?.created_at||null},purchases:purchases.map(x=>({...x,amount:x.amount_cents/100})),redemptions});});
+app.post('/api/customers/:id/loyalty',auth,managerOnly,(req,res)=>{const idn=Number(req.params.id),c=db.customers.find(x=>x.id===idn),delta=Math.trunc(Number(req.body.delta)),reason=String(req.body.reason||'').trim();if(!c)return res.status(404).json({error:'Cliente introuvable'});if(!Number.isFinite(delta)||delta===0)return res.status(400).json({error:'Variation de points invalide'});if(!reason)return res.status(400).json({error:'Le motif est obligatoire'});if(c.points+delta<0)return res.status(400).json({error:'Le solde de points ne peut pas être négatif'});if(!Array.isArray(db.loyalty_adjustments))db.loyalty_adjustments=[];db.loyalty_adjustments.push({id:id('loyalty_adjustments'),customer_id:idn,delta,reason,created_at:new Date().toISOString(),by_user:req.user.username});c.points+=delta;save();res.json(c)});
+
 app.post('/api/purchases',auth,salesOnly,(req,res)=>{const customer_id=Number(req.body.customer_id),amount=Number(req.body.amount),c=db.customers.find(x=>x.id===customer_id);if(!c||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Montant invalide'});const cents=Math.round(amount*100),points=Math.floor(cents/100);db.purchases.push({id:id('purchases'),customer_id,amount_cents:cents,points,created_at:new Date().toISOString(),by_user:req.user.username});c.points+=points;save();res.json(c)});
 app.get('/api/rewards',auth,salesOnly,(req,res)=>res.json(db.rewards.filter(x=>x.active)));app.post('/api/rewards',auth,adminOnly,(req,res)=>{const p=Number(req.body.points_cost),v=Math.round(Number(req.body.value_euros)*100);if(!req.body.name||p<=0||v<=0)return res.status(400).json({error:'Données invalides'});const r={id:id('rewards'),name:req.body.name,points_cost:p,value_cents:v,active:1};db.rewards.push(r);save();res.json(r)});
 app.post('/api/redemptions',auth,salesOnly,(req,res)=>{const c=db.customers.find(x=>x.id===Number(req.body.customer_id)),r=db.rewards.find(x=>x.id===Number(req.body.reward_id)&&x.active);if(!c||!r)return res.status(404).json({error:'Cliente ou récompense introuvable'});if(c.points<r.points_cost)return res.status(400).json({error:'Points insuffisants'});db.redemptions.push({id:id('redemptions'),customer_id:c.id,reward_id:r.id,points_used:r.points_cost,value_cents:r.value_cents,created_at:new Date().toISOString(),by_user:req.user.username});c.points-=r.points_cost;save();res.json(c)});
