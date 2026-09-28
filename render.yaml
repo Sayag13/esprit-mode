@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: esprit-mode-test
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: NODE_VERSION
+        value: 22
