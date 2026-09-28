@@ -25,13 +25,15 @@ CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username
 CREATE TABLE IF NOT EXISTS rewards (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, points_cost INTEGER NOT NULL, value_cents INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS redemptions (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL, reward_id INTEGER NOT NULL, points_used INTEGER NOT NULL, value_cents INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(customer_id) REFERENCES customers(id), FOREIGN KEY(reward_id) REFERENCES rewards(id));
 `);
-try { db.prepare('ALTER TABLE customers ADD COLUMN public_token TEXT UNIQUE').run(); } catch(e) {}
-for (const c of db.prepare('SELECT id FROM customers WHERE public_token IS NULL').all()) db.prepare('UPDATE customers SET public_token=? WHERE id=?').run(crypto.randomBytes(18).toString('hex'), c.id);
+const cols = db.prepare('PRAGMA table_info(customers)').all().map(c => c.name);
+if (!cols.includes('public_token')) { db.exec('ALTER TABLE customers ADD COLUMN public_token TEXT'); }
+try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_public_token ON customers(public_token)'); } catch(e) { console.error('public_token index migration:', e.message); }
+for (const c of db.prepare('SELECT id FROM customers WHERE public_token IS NULL OR public_token = ''').all()) db.prepare('UPDATE customers SET public_token=? WHERE id=?').run(crypto.randomBytes(18).toString('hex'), c.id);
 if (!db.prepare('SELECT id FROM users LIMIT 1').get()) db.prepare('INSERT INTO users(username,password_hash,role) VALUES(?,?,?)').run('admin', hash(process.env.ADMIN_PASSWORD || 'changer-moi'), 'admin');
 if (!db.prepare('SELECT id FROM rewards LIMIT 1').get()) db.prepare('INSERT INTO rewards(name,points_cost,value_cents) VALUES(?,?,?)').run('Bon de 10 €', 100, 1000);
 
 function hash(p){ return crypto.createHash('sha256').update(String(p)).digest('hex'); }
-function normalizePhone(value){ return String(value || '').replace(/\s+/g,'').replace(/[().-]/g,''); }
+function normalizePhone(value){ return String(value || '').replace(/[^0-9+]/g,''); }
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health',(req,res)=>res.json({ok:true,service:'esprit-mode'}));
@@ -81,7 +83,7 @@ app.post('/api/customers',auth,(req,res)=>{
   const existing=db.prepare('SELECT id,first_name,last_name,phone,email,points,public_token FROM customers WHERE phone=?').get(cleanPhone);
   if(existing) return res.status(409).json({error:'Ce numéro existe déjà',customer:existing});
   console.error('customer creation error', e);
-  res.status(500).json({error:'Impossible de créer la cliente pour le moment'});
+  res.status(500).json({error:'Impossible de créer la cliente pour le moment', code:e && e.code ? e.code : 'UNKNOWN'});
 }
 });
 app.get('/api/customers',auth,(req,res)=>{ const q=(req.query.q||'').trim(); const rows=q?db.prepare(`SELECT * FROM customers WHERE first_name LIKE ? OR last_name LIKE ? OR phone LIKE ? OR email LIKE ? ORDER BY last_name,first_name LIMIT 100`).all(`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`):db.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 100').all(); res.json(rows); });

@@ -1,6 +1,6 @@
 # ESPRIT MODE — application de fidélité
 
-Version 0.6 — préparation au déploiement de test.
+Version 0.7 — préparation au déploiement de test.
 
 Application PWA Node.js + Express + SQLite, auto-hébergeable.
 
@@ -29,7 +29,7 @@ Puis ouvrir http://localhost:3000
 Voir `DEPLOIEMENT-TEST.md` et `render.yaml`.
 
 
-## Correction v0.6
+## Correction v0.7
 - contrôle explicite des doublons de téléphone
 - normalisation des numéros (espaces, points, tirets, parenthèses)
 - erreurs SQLite distinguées des vrais doublons
