@@ -1,29 +1,8 @@
-# ESPRIT MODE — application de fidélité
+# Esprit Mode — v0.7.0
 
-Version 0.6 — préparation au déploiement de test.
+Rôles :
+- admin : Élie, back-office complet
+- manager : Michelle, gestion commerciale et communication
+- seller : vendeuses, saisie des achats uniquement
 
-Application PWA Node.js + Express + SQLite, auto-hébergeable.
-
-## Fonctionnalités
-- inscription cliente publique
-- carte fidélité personnelle
-- QR code personnel
-- points (1 € = 1 point)
-- récompenses
-- achats et historique
-- comptes boutique
-- recherche clientes
-- export CSV
-- statistiques
-- PWA
-- endpoint de santé `/health`
-
-## Lancement local
-```bash
-npm install
-ADMIN_PASSWORD='un-mot-de-passe-fort' npm start
-```
-Puis ouvrir http://localhost:3000
-
-## Déploiement de test
-Voir `DEPLOIEMENT-TEST.md` et `render.yaml`.
+La communication est préparée dans l'espace Michelle. Les connecteurs SMS/e-mail/WhatsApp/réseaux sociaux devront être raccordés avant l'envoi réel.
