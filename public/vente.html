@@ -1,1 +1,57 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#171717"><link rel="manifest" href="manifest.json"><title>Esprit Mode — Vente</title><style>body{font-family:system-ui;margin:0;background:#f7f5f2;color:#222}header{background:#171717;color:#fff;padding:20px}main{max-width:700px;margin:auto;padding:18px}.card{background:#fff;padding:18px;border-radius:18px;margin:12px 0;box-shadow:0 2px 12px #0001}input,button{font:inherit;padding:13px;border-radius:12px;border:1px solid #ccc;margin:4px}input{width:calc(100% - 8px);box-sizing:border-box}button{background:#171717;color:#fff}.client{padding:14px;border:1px solid #ddd;border-radius:14px;margin:8px 0}.small{color:#777}</style></head><body><header><strong>ESPRIT MODE</strong> — 🛍️ Vente</header><main><div class="card"><h2>Ajouter un achat</h2><input id="q" placeholder="Rechercher nom ou téléphone" oninput="find()"><div id="results"></div></div><div class="card"><h2>Nouvelle cliente</h2><p class="small">Créer rapidement une carte avec les informations essentielles. Les autres informations pourront être complétées plus tard.</p><input id="nf" placeholder="Prénom"><input id="nl" placeholder="Nom"><input id="np" placeholder="Téléphone"><input id="ne" type="email" placeholder="E-mail"><button onclick="createClient()">Créer la carte</button><div id="msg" class="small"></div></div></main><script>const H=()=>({Authorization:localStorage.auth||''});async function find(){const d=await(await fetch('/api/customers?q='+encodeURIComponent(q.value),{headers:H()})).json();results.innerHTML=d.map(c=>`<div class="client"><b>${c.first_name} ${c.last_name}</b><div class="small">${c.phone} · ${c.points} points</div><button onclick="buy(${c.id},'${c.first_name}')">Enregistrer un achat</button></div>`).join('')}async function createClient(){const first_name=nf.value.trim(),last_name=nl.value.trim(),phone=np.value.trim(),email=ne.value.trim();if(!first_name||!last_name||!phone||!email){msg.textContent='Prénom, nom, téléphone et e-mail sont obligatoires.';return}const r=await fetch('/api/customers',{method:'POST',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({first_name,last_name,phone,email})});const d=await r.json();if(!r.ok){msg.textContent=d.error||'Impossible de créer la carte.';return}msg.textContent='Carte créée pour '+d.first_name+' '+d.last_name+'.';nf.value='';nl.value='';np.value='';ne.value='';q.value=d.phone;find()}async function buy(id,name){const amount=prompt('Montant de l’achat de '+name+' (€)');if(!amount)return;const r=await fetch('/api/purchases',{method:'POST',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({customer_id:id,amount})});const d=await r.json();alert(r.ok?'Achat enregistré. Nouveau solde : '+d.points+' points':d.error);find()}find()</script></body></html>
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#171717"><link rel="manifest" href="manifest.json"><title>Esprit Mode — Vente</title><style>
+body{font-family:system-ui;margin:0;background:#f7f5f2;color:#222}header{background:#171717;color:#fff;padding:20px}main{max-width:700px;margin:auto;padding:18px}.card{background:#fff;padding:18px;border-radius:18px;margin:12px 0;box-shadow:0 2px 12px #0001}input,button{font:inherit;padding:13px;border-radius:12px;border:1px solid #ccc;margin:4px}input{width:calc(100% - 8px);box-sizing:border-box}button{background:#171717;color:#fff;cursor:pointer}.client{padding:14px;border:1px solid #ddd;border-radius:14px;margin:8px 0}.small{color:#777}.hint{padding:10px 4px;color:#666}.hidden{display:none}.client-name{font-size:18px;font-weight:700}.client-main{display:flex;justify-content:space-between;gap:12px;align-items:center}.client-info{min-width:0}.badge{font-weight:600}.secondary{background:#fff;color:#171717}.newbox{border-top:1px solid #eee;margin-top:16px;padding-top:16px}.success{color:#187a3d}.error{color:#a11}
+</style></head><body><header><strong>ESPRIT MODE</strong> — 🛍️ Vente</header><main>
+<div class="card"><h2>Rechercher une cliente</h2><input id="q" placeholder="Téléphone, e-mail ou nom" autocomplete="off" oninput="find()"><div id="hint" class="hint">Saisissez le téléphone, l’e-mail ou le nom de la cliente.</div><div id="results"></div>
+<div id="newChoice" class="newbox hidden"><div class="small">Aucune cliente exacte trouvée.</div><button class="secondary" onclick="showNewClient()">➕ Créer une nouvelle cliente</button></div></div>
+<div id="newCard" class="card hidden"><h2>Nouvelle cliente</h2><p class="small">Pour créer une carte en boutique, les 4 informations sont obligatoires.</p><input id="nf" placeholder="Prénom"><input id="nl" placeholder="Nom"><input id="np" placeholder="Téléphone"><input id="ne" type="email" placeholder="E-mail"><button onclick="createClient()">Créer la carte</button><div id="msg" class="small"></div></div>
+</main><script>
+const H=()=>({Authorization:localStorage.auth||''});
+let timer;
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+async function find(){
+  clearTimeout(timer); const term=q.value.trim();
+  timer=setTimeout(async()=>{
+    results.innerHTML=''; newChoice.classList.add('hidden'); newCard.classList.add('hidden');
+    if(!term){hint.textContent='Saisissez le téléphone, l’e-mail ou le nom de la cliente.';return;}
+    hint.textContent='Recherche en cours…';
+    const d=await(await fetch('/api/customers?q='+encodeURIComponent(term),{headers:H()})).json();
+    const normalized=term.toLowerCase().replace(/\s+/g,'');
+    const exact=d.filter(c=>{
+      const phone=String(c.phone||'').toLowerCase().replace(/\s+/g,'');
+      const email=String(c.email||'').toLowerCase();
+      const name=(String(c.first_name||'')+' '+String(c.last_name||'')).toLowerCase().trim();
+      return phone===normalized || email===term.toLowerCase() || name===term.toLowerCase();
+    });
+    const list=exact.length?exact:d;
+    if(exact.length===1){
+      hint.textContent='Cliente trouvée';
+      renderClients(exact);
+      return;
+    }
+    if(!list.length){
+      hint.textContent='Aucune cliente trouvée.';
+      newChoice.classList.remove('hidden');
+      return;
+    }
+    hint.textContent=list.length===1?'1 cliente trouvée':'Plusieurs clientes correspondent à la recherche :';
+    renderClients(list);
+  },180);
+}
+function renderClients(list){
+  results.innerHTML=list.map(c=>`<div class="client"><div class="client-main"><div class="client-info"><div class="client-name">${esc(c.first_name)} ${esc(c.last_name)}</div><div class="small">${esc(c.phone)} · <span class="badge">${c.points} points</span></div></div><button onclick="buy(${c.id},'${esc(c.first_name)}')">Enregistrer un achat</button></div></div>`).join('');
+}
+function showNewClient(){newCard.classList.remove('hidden');nf.focus();}
+async function createClient(){
+  const first_name=nf.value.trim(),last_name=nl.value.trim(),phone=np.value.trim(),email=ne.value.trim();
+  if(!first_name||!last_name||!phone||!email){msg.className='small error';msg.textContent='Prénom, nom, téléphone et e-mail sont obligatoires.';return}
+  const r=await fetch('/api/customers',{method:'POST',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({first_name,last_name,phone,email})});
+  const d=await r.json(); if(!r.ok){msg.className='small error';msg.textContent=d.error||'Impossible de créer la carte.';return}
+  msg.className='small success';msg.textContent='Carte créée pour '+d.first_name+' '+d.last_name+'.';
+  nf.value='';nl.value='';np.value='';ne.value='';q.value=d.phone;find();
+}
+async function buy(id,name){
+  const amount=prompt('Montant de l’achat de '+name+' (€)'); if(!amount)return;
+  const r=await fetch('/api/purchases',{method:'POST',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({customer_id:id,amount})});
+  const d=await r.json(); alert(r.ok?'Achat enregistré. Nouveau solde : '+d.points+' points':d.error); find();
+}
+</script></body></html>
