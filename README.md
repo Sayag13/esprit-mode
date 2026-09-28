@@ -1,6 +1,6 @@
 # ESPRIT MODE — application de fidélité
 
-Version 0.4 — préparation au déploiement de test.
+Version 0.6 — préparation au déploiement de test.
 
 Application PWA Node.js + Express + SQLite, auto-hébergeable.
 
