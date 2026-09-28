@@ -1,6 +1,6 @@
 # ESPRIT MODE — application de fidélité
 
-Version 0.4 — préparation au déploiement de test.
+Version 0.5 — préparation au déploiement de test.
 
 Application PWA Node.js + Express + SQLite, auto-hébergeable.
 
@@ -27,3 +27,7 @@ Puis ouvrir http://localhost:3000
 
 ## Déploiement de test
 Voir `DEPLOIEMENT-TEST.md` et `render.yaml`.
+
+
+## Version 0.5
+Ajout de la suppression sécurisée d’une cliente depuis l’espace boutique (administrateur), avec suppression de son historique d’achats et de ses récompenses utilisées.
