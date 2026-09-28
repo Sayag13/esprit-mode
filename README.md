@@ -1,4 +1,4 @@
-# Esprit Mode — v0.7.3
+# Esprit Mode — v0.7.2
 
 Rôles :
 - admin : Élie, back-office complet
@@ -12,10 +12,3 @@ La communication est préparée dans l'espace Michelle. Les connecteurs SMS/e-ma
 La version 0.7.2 peut utiliser PostgreSQL via la variable d'environnement `DATABASE_URL`. Lorsqu'elle est présente, toutes les données de l'application sont conservées dans une base PostgreSQL distante. Sans cette variable, l'application conserve le mode fichier local pour les tests.
 
 Pour Render Free, un PostgreSQL Render gratuit est possible mais expire après 30 jours. Pour une base gratuite durable, utiliser un fournisseur PostgreSQL externe compatible, puis renseigner sa chaîne `DATABASE_URL` dans Render.
-
-
-## Rôles
-- Élie : administrateur complet
-- Michelle : gestion commerciale et campagnes
-- Vendeuse 1 et Vendeuse 2 : recherche clientes et saisie des achats
-- Maximum 2 comptes vendeuse.

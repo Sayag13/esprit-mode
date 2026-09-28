@@ -55,14 +55,41 @@ function token(){return crypto.randomBytes(18).toString('hex')}
 async function bootstrap(){
   await loadDb();
   let changed=false;
-  if(!db.users.length){db.users.push({id:id('users'),username:'admin',password_hash:hash(process.env.ADMIN_PASSWORD||'changer-moi'),role:'admin',display_name:'Élie'});changed=true}
+
+  // Comptes professionnels initiaux demandés pour la boutique.
+  // Les mots de passe sont stockés uniquement sous forme de hash SHA-256.
+  const staff=[
+    {username:'admin',password:'1326',role:'admin',display_name:'Élie'},
+    {username:'mimi',password:'0912',role:'manager',display_name:'Michelle'},
+    {username:'elodiev',password:'9459',role:'seller',display_name:'Vendeuse 1'},
+    {username:'elodier',password:'9447',role:'seller',display_name:'Vendeuse 2'}
+  ];
+  for(const wanted of staff){
+    const existing=db.users.find(x=>x.username===wanted.username);
+    if(existing){
+      if(existing.password_hash!==hash(wanted.password)||existing.role!==wanted.role||existing.display_name!==wanted.display_name){
+        existing.password_hash=hash(wanted.password);
+        existing.role=wanted.role;
+        existing.display_name=wanted.display_name;
+        changed=true;
+      }
+    }else{
+      db.users.push({id:id('users'),username:wanted.username,password_hash:hash(wanted.password),role:wanted.role,display_name:wanted.display_name});
+      changed=true;
+    }
+  }
+
   if(!db.rewards.length){db.rewards.push({id:id('rewards'),name:'Bon de 10 €',points_cost:100,value_cents:1000,active:1});changed=true}
-  if(changed)save();
+  if(changed){
+    if(pool){
+      await pool.query('INSERT INTO app_state(id,data,updated_at) VALUES(1,$1::jsonb,now()) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data,updated_at=now()',[JSON.stringify(db)]);
+    }else save();
+  }
 }
 
 app.use(express.json({limit:'2mb'}));
 app.use(express.static(path.join(__dirname,'public')));
-app.get('/health',(q,s)=>s.json({ok:true,service:'esprit-mode',version:'0.7.2',storage:pool?'postgres':'file'}));
+app.get('/health',(q,s)=>s.json({ok:true,service:'esprit-mode',version:'0.7.4',storage:pool?'postgres':'file'}));
 
 function auth(req,res,next){const h=req.headers.authorization||'';if(!h.startsWith('Basic '))return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Connexion requise'});const raw=Buffer.from(h.slice(6),'base64').toString(),i=raw.indexOf(':'),u=raw.slice(0,i),p=raw.slice(i+1),user=db.users.find(x=>x.username===u&&x.password_hash===hash(p));if(!user)return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Identifiants incorrects'});req.user={id:user.id,username:user.username,role:user.role,display_name:user.display_name||user.username};next()}
 function allow(...roles){return (req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({error:'Accès non autorisé'})}
@@ -81,10 +108,10 @@ app.post('/api/redemptions',auth,salesOnly,(req,res)=>{const c=db.customers.find
 app.get('/api/stats',auth,adminOnly,(req,res)=>{const total=db.purchases.reduce((n,x)=>n+x.amount_cents,0)/100;res.json({customers:db.customers.length,sales:db.purchases.length,total,points:db.customers.reduce((n,x)=>n+x.points,0)})});
 app.get('/api/export.csv',auth,adminOnly,(req,res)=>{const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';const csv='\ufeff'+['Prénom;Nom;Téléphone;E-mail;Date de naissance;Points;Inscription',...db.customers.map(r=>[r.first_name,r.last_name,r.phone,r.email,r.birth_date,r.points,r.created_at].map(esc).join(';'))].join('\n');res.set('Content-Type','text/csv; charset=utf-8').set('Content-Disposition','attachment; filename="esprit-mode-clientes.csv"').send(csv)});
 app.get('/api/users',auth,adminOnly,(req,res)=>res.json(db.users.map(x=>({id:x.id,username:x.username,role:x.role,display_name:x.display_name||x.username}))));
-app.post('/api/users',auth,adminOnly,(req,res)=>{const {username,password,role='seller',display_name=''}=req.body;if(!username||!password||!['admin','manager','seller'].includes(role))return res.status(400).json({error:'Identifiants ou rôle invalides'});if(db.users.some(x=>x.username===username))return res.status(409).json({error:'Cet utilisateur existe déjà'});if(role==='seller'&&db.users.filter(x=>x.role==='seller').length>=2)return res.status(400).json({error:'Maximum de 2 vendeuses atteint.'});db.users.push({id:id('users'),username,password_hash:hash(password),role,display_name:display_name||username});save();res.json({ok:true})});
+app.post('/api/users',auth,adminOnly,(req,res)=>{const {username,password,role='seller',display_name=''}=req.body;if(!username||!password||!['admin','manager','seller'].includes(role))return res.status(400).json({error:'Identifiants ou rôle invalides'});if(db.users.some(x=>x.username===username))return res.status(409).json({error:'Cet utilisateur existe déjà'});if(role==='seller'&&db.users.filter(x=>x.role==='seller').length>=2)return res.status(400).json({error:'Maximum 2 comptes vendeuse autorisés.'});db.users.push({id:id('users'),username,password_hash:hash(password),role,display_name:display_name||username});save();res.json({ok:true})});
 app.get('/api/qr/:id',auth,salesOnly,async(req,res)=>{const c=db.customers.find(x=>x.id===Number(req.params.id));if(!c)return res.status(404).end();try{const png=await QRCode.toBuffer(publicUrl(c.public_token,req),{width:320,margin:2});res.type('png').send(png)}catch(e){res.status(500).json({error:'QR indisponible'})}});
 app.get('/api/campaigns',auth,managerOnly,(req,res)=>res.json(db.campaigns.sort((a,b)=>b.created_at.localeCompare(a.created_at))));
 app.post('/api/campaigns',auth,managerOnly,(req,res)=>{const x=req.body||{};if(!x.title||!x.message)return res.status(400).json({error:'Titre et message obligatoires'});const c={id:id('campaigns'),title:String(x.title).trim(),message:String(x.message).trim(),media_url:String(x.media_url||'').trim(),channels:{email:!!x.email,sms:!!x.sms,whatsapp:!!x.whatsapp,facebook:!!x.facebook,instagram:!!x.instagram},status:'brouillon',created_at:new Date().toISOString(),created_by:req.user.username};db.campaigns.push(c);save();res.json(c)});
 app.post('/api/campaigns/:id/status',auth,managerOnly,(req,res)=>{const c=db.campaigns.find(x=>x.id===Number(req.params.id));if(!c)return res.status(404).json({error:'Campagne introuvable'});if(!['brouillon','prete'].includes(req.body.status))return res.status(400).json({error:'Statut invalide'});c.status=req.body.status;save();res.json(c)});
 
-bootstrap().then(()=>app.listen(PORT,HOST,()=>console.log(`Esprit Mode v0.7.2: http://${HOST}:${PORT} storage=${pool?'postgres':'file'}`))).catch(e=>{console.error('Startup:',e);process.exit(1)});
+bootstrap().then(()=>app.listen(PORT,HOST,()=>console.log(`Esprit Mode v0.7.4: http://${HOST}:${PORT} storage=${pool?'postgres':'file'}`))).catch(e=>{console.error('Startup:',e);process.exit(1)});
