@@ -1,1 +1,23 @@
-{"name":"Esprit Mode","short_name":"Esprit Mode","start_url":"/","display":"standalone","background_color":"#f7f5f2","theme_color":"#465157","description":"Carte de fidélité Esprit Mode","icons":[]}
+{
+  "name": "esprit mode",
+  "short_name": "esprit mode",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#383E42",
+  "theme_color": "#383E42",
+  "description": "Carte de fidélité esprit mode",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
