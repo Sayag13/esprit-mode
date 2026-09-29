@@ -1,4 +1,4 @@
-# Esprit Mode — v0.7.6
+# Esprit Mode — v0.8.3
 
 Rôles :
 - admin : Élie, back-office complet
