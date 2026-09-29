@@ -102,6 +102,8 @@ app.get('/api/public/config',(req,res)=>res.json({
   ],
   social:{instagram:'',facebook:''}
 }));
+app.get('/api/public/social-qr/:network',async(req,res)=>{try{const links={instagram:'https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/',facebook:'https://www.facebook.com/share/v/1Dn4Wx3Ww8/'};const url=links[req.params.network];if(!url)return res.status(404).end();const png=await QRCode.toBuffer(url,{width:360,margin:2});res.type('png').send(png)}catch(e){res.status(500).end()}});
+
 app.get('/api/public/app-qr',async(req,res)=>{try{const url=(process.env.PUBLIC_URL||`${req.protocol}://${req.get('host')}`).replace(/\/$/,'')+'/';const png=await QRCode.toBuffer(url,{width:520,margin:2});res.type('png').send(png)}catch(e){res.status(500).end()}});
 
 function auth(req,res,next){const h=req.headers.authorization||'';if(!h.startsWith('Basic '))return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Connexion requise'});const raw=Buffer.from(h.slice(6),'base64').toString(),i=raw.indexOf(':'),u=raw.slice(0,i),p=raw.slice(i+1),user=db.users.find(x=>x.username===u&&x.password_hash===hash(p));if(!user)return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Identifiants incorrects'});req.user={id:user.id,username:user.username,role:user.role,display_name:user.display_name||user.username};next()}
