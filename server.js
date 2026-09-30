@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.0.7';
+const VERSION = '1.1.2';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -37,6 +37,16 @@ const SESSION_DAYS = 30;
 /* ======================= Données ======================= */
 
 const DEFAULT_SETTINGS = { points_per_euro: 1, threshold: 300, voucher_value_cents: 3000, voucher_validity_days: 365, auto_voucher: true, voucher_conditions: "Bon d'achat valable dans les deux boutiques esprit mode, en une seule fois." };
+const DEFAULT_OPTIONS = {
+  email_voucher: false,                 // e-mail « Carte pleine ! » à la création d'un bon
+  email_expiry_reminder: false, reminder_days: 30,   // rappel avant expiration d'un bon
+  birthday_suggested_points: 20, birthday_sellers_can_offer: false,
+  birthday_auto_points: false, birthday_auto_email: false,
+  levels_enabled: false, levels: [{ name: 'Essentielle', min: 0 }, { name: 'Élégante', min: 600 }, { name: 'Icône', min: 1500 }],
+  welcome_bonus_enabled: false, welcome_bonus_points: 20,
+  special_day_enabled: false, special_day_multiplier: 2, special_day_label: 'Journée spéciale',
+  weekly_backup: false, backup_email: 'espritmode13@gmail.com'
+};
 const SEQ_KEYS = ['customers', 'purchases', 'users', 'rewards', 'redemptions', 'campaigns', 'loyalty_adjustments', 'vouchers', 'audit', 'videos'];
 const STORES = ['Général de Gaulle', 'Clemenceau'];
 
@@ -49,6 +59,8 @@ function normalizeDb(x) {
   const d = { ...base, ...(x || {}) };
   for (const k of Object.keys(base)) if (Array.isArray(base[k]) && !Array.isArray(d[k])) d[k] = [];
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+  d.settings.options = { ...DEFAULT_OPTIONS, ...((d.settings && d.settings.options) || {}) };
+  d.meta = d.meta || {};
   d.seq = { ...base.seq, ...(d.seq || {}) };
   d.migrations = d.migrations || {};
   d.email_log = d.email_log && typeof d.email_log === 'object' && !Array.isArray(d.email_log) ? d.email_log : {};
@@ -117,24 +129,28 @@ function validPhone(d) { return d.startsWith('0') ? d.length === 10 : d.length >
 function validEmail(e) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); }
 const clean = (s, max = 120) => String(s == null ? '' : s).replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, max);
 function validDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : ''; }
-function baseUrl(req) { return (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, ''); }
+let LAST_BASE = 'https://esprit-mode.onrender.com';
+function baseUrl(req) { if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/$/, ''); if (!req) return LAST_BASE; return `${req.protocol}://${req.get('host')}`.replace(/\/$/, ''); }
 function cardUrl(c, req) { return `${baseUrl(req)}/carte.html?token=${encodeURIComponent(c.public_token)}`; }
 function audit(user, action, detail) {
   db.audit.push({ id: nextId('audit'), at: nowIso(), by: user ? user.username : 'public', action, detail: String(detail || '').slice(0, 300) });
   if (db.audit.length > 3000) db.audit.splice(0, db.audit.length - 3000);
 }
 const S = () => db.settings;
+const O = () => db.settings.options || DEFAULT_OPTIONS;
 function voucherStatus(v) {
   if (v.status === 'used' || v.status === 'cancelled') return v.status;
   return new Date(v.expires_at).getTime() < Date.now() ? 'expired' : 'active';
 }
 function activeVouchers(cid) { return db.vouchers.filter(v => v.customer_id === cid && voucherStatus(v) === 'active'); }
-function pointsForCents(cents) { return Math.max(0, Math.floor((cents / 100) * Number(S().points_per_euro || 1))); }
+function pointsForCents(cents, noBonus) { const mult = !noBonus && O().special_day_enabled ? Math.max(1, Number(O().special_day_multiplier) || 1) : 1; return Math.max(0, Math.floor((cents / 100) * Number(S().points_per_euro || 1) * mult)); }
 function createVoucher(c, user) {
   const s = S();
   const v = { id: nextId('vouchers'), customer_id: c.id, value_cents: s.voucher_value_cents, points_used: s.threshold, created_at: nowIso(),
     expires_at: new Date(Date.now() + s.voucher_validity_days * DAY).toISOString(), status: 'active', used_at: null, used_by: null, created_by: user ? user.username : 'auto' };
-  db.vouchers.push(v); c.points -= s.threshold; return v;
+  db.vouchers.push(v); c.points -= s.threshold;
+  if (O().email_voucher) setTimeout(() => sendVoucherEmail(c, v), 300);
+  return v;
 }
 function autoVouchers(c, user) {
   const made = [];
@@ -162,6 +178,23 @@ function applyConsents(c, d) {
   if (d.marketing_email !== !!c.marketing_email) { c.marketing_email = d.marketing_email; c.marketing_email_at = t; }
   if (d.marketing_sms !== !!c.marketing_sms) { c.marketing_sms = d.marketing_sms; c.marketing_sms_at = t; }
 }
+function spentEuros(cid) { return db.purchases.filter(p => p.customer_id === cid && !p.cancelled).reduce((n, p) => n + p.amount_cents, 0) / 100; }
+function levelOf(c) {
+  if (!O().levels_enabled) return null;
+  const lv = [...(O().levels || [])].filter(l => l.name).sort((a, b) => a.min - b.min); if (!lv.length) return null;
+  const spent = spentEuros(c.id); let cur = lv[0];
+  for (const l of lv) if (spent >= l.min) cur = l;
+  const next = lv.find(l => l.min > spent);
+  return { name: cur.name, spent, next: next ? { name: next.name, remaining: Math.ceil(next.min - spent) } : null };
+}
+function mmdd(d) { return String(d || '').slice(5, 10); }
+function birthdayIn(c, days) {
+  if (!c.birth_date || !/^\d{4}-\d{2}-\d{2}$/.test(c.birth_date)) return null;
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  for (let i = 0; i <= days; i++) { const x = new Date(t); x.setDate(t.getDate() + i); if (x.toLocaleDateString('fr-CA').slice(5) === mmdd(c.birth_date)) return i; }
+  return null;
+}
+function birthdayGivenThisYear(c) { const tag = 'Bonus anniversaire ' + new Date().getFullYear(); return db.loyalty_adjustments.some(a => a.customer_id === c.id && a.reason === tag); }
 function customerSummary(c) {
   const p = db.purchases.filter(x => x.customer_id === c.id && !x.cancelled);
   return { id: c.id, first_name: c.first_name, last_name: c.last_name, phone: c.phone, email: c.email, points: c.points,
@@ -214,7 +247,8 @@ app.use((req, res, next) => {
   res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin' });
   next();
 });
-app.use(express.json({ limit: '200kb' }));
+app.use((req, res, next) => { const h = String((req.get && req.get('host')) || ''); if (!process.env.PUBLIC_URL && h && !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(h)) LAST_BASE = `${req.protocol}://${h}`; next(); });
+app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 
 function auth(req, res, next) {
@@ -295,6 +329,7 @@ app.post('/api/public/register', tx(req => {
   const c = { id: nextId('customers'), ...d, marketing_email_at: d.marketing_email ? t : null, marketing_sms_at: d.marketing_sms ? t : null,
     terms_accepted_at: t, points: 0, public_token: newToken(), created_at: t, source: 'cliente' };
   db.customers.push(c);
+  applyWelcomeBonus(c, null);
   setTimeout(() => sendWelcome(c, req), 500);
   return { token: c.public_token };
 }));
@@ -312,6 +347,7 @@ app.get('/api/public/customer/token/:token', read(req => {
       created_at: c.created_at, deletion_requested: !!c.deletion_requested_at },
     rule: { threshold: S().threshold, voucher_value: S().voucher_value_cents / 100, validity_days: S().voucher_validity_days, points_per_euro: S().points_per_euro, conditions: S().voucher_conditions || '' },
     redemptions: db.redemptions.filter(r => r.customer_id === c.id).map(r => ({ created_at: r.created_at, points_used: r.points_used, value: (r.value_cents || 0) / 100 })),
+    level: levelOf(c), special_day: O().special_day_enabled ? { label: O().special_day_label, multiplier: O().special_day_multiplier } : null,
     vouchers: db.vouchers.filter(v => v.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 10).map(publicVoucher),
     history: db.purchases.filter(x => x.customer_id === c.id && !x.cancelled).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20)
       .map(x => ({ created_at: x.created_at, amount: x.amount_cents / 100, points: x.points }))
@@ -423,6 +459,7 @@ app.post('/api/customers', auth, salesOnly, tx(req => {
   const c = { id: nextId('customers'), ...d, marketing_email_at: d.marketing_email ? t : null, marketing_sms_at: d.marketing_sms ? t : null,
     terms_accepted_at: t, points: 0, public_token: newToken(), created_at: t, source: 'boutique', created_by: req.user.username };
   db.customers.push(c);
+  applyWelcomeBonus(c, null);
   setTimeout(() => sendWelcome(c, req), 500);
   return customerSummary(c);
 }));
@@ -437,7 +474,12 @@ app.get('/api/customers/:id/profile', auth, salesOnly, read(req => {
       marketing_sms_at: c.marketing_sms_at, terms_accepted_at: c.terms_accepted_at, created_at: c.created_at, points: c.points, deletion_requested_at: c.deletion_requested_at || null },
     card_url: cardUrl(c, req),
     stats: { purchases: live.length, total_euros: live.reduce((n, x) => n + x.amount_cents, 0) / 100, points: c.points, last_purchase: live[0] ? live[0].created_at : null,
-      remaining: Math.max(0, S().threshold - c.points) },
+      remaining: Math.max(0, S().threshold - c.points),
+      avg_basket: live.length ? Math.round(live.reduce((n, x) => n + x.amount_cents, 0) / live.length) / 100 : 0,
+      frequency_days: live.length > 1 ? Math.round((new Date(live[0].created_at) - new Date(live[live.length - 1].created_at)) / DAY / (live.length - 1)) : null,
+      last_store: (live[0] && live[0].store) || '' },
+    level: levelOf(c),
+    birthday: { in_days: birthdayIn(c, 7), given_this_year: birthdayGivenThisYear(c) },
     purchases: purchases.map(x => ({ id: x.id, created_at: x.created_at, amount: x.amount_cents / 100, points: x.points, by_user: x.by_user, store: x.store || '', cancelled: !!x.cancelled })),
     vouchers: db.vouchers.filter(v => v.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map(publicVoucher),
     adjustments: db.loyalty_adjustments.filter(a => a.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -554,6 +596,7 @@ app.get('/api/dashboard', auth, adminOnly, read(() => {
     vouchers_created: db.vouchers.filter(v => v.status !== 'cancelled').length, vouchers_used: db.vouchers.filter(v => v.status === 'used').length + db.redemptions.length,
     vouchers_active: db.vouchers.filter(v => voucherStatus(v) === 'active').length, vouchers_expired: db.vouchers.filter(v => voucherStatus(v) === 'expired').length,
     near_reward: customers.filter(c => c.points >= S().threshold - 50).length,
+    birthdays_week: customers.filter(c => birthdayIn(c, 6) !== null).length,
     by_store: [...STORES, ''].map(st => ({ store: st || 'Non précisée', ca_month: purchases.filter(x => (x.store || '') === st && ts(x) >= startMonth).reduce((n, x) => n + x.amount_cents, 0) / 100,
       sales_month: purchases.filter(x => (x.store || '') === st && ts(x) >= startMonth).length })).filter(r => r.store !== 'Non précisée' || r.sales_month > 0),
     deletion_requests: customers.filter(c => c.deletion_requested_at).map(c => ({ id: c.id, name: `${c.first_name} ${c.last_name}`, at: c.deletion_requested_at }))
@@ -567,7 +610,7 @@ app.post('/api/settings', auth, adminOnly, tx(req => {
   if (!(th >= 10 && th <= 100000)) bad('Seuil de carte pleine invalide.');
   if (!(val > 0 && val <= 10000)) bad('Valeur du bon invalide.');
   if (!(days >= 1 && days <= 3650)) bad('Validité du bon : entre 1 et 3650 jours.');
-  db.settings = { points_per_euro: ppe, threshold: th, voucher_value_cents: Math.round(val * 100), voucher_validity_days: days, auto_voucher: !!x.auto_voucher, voucher_conditions: clean(x.voucher_conditions, 300) };
+  db.settings = { points_per_euro: ppe, threshold: th, voucher_value_cents: Math.round(val * 100), voucher_validity_days: days, auto_voucher: !!x.auto_voucher, voucher_conditions: clean(x.voucher_conditions, 300), options: O() };
   audit(req.user, 'reglages', JSON.stringify(db.settings));
   return { ...S(), voucher_value: S().voucher_value_cents / 100 };
 }));
@@ -584,12 +627,95 @@ app.post('/api/admin/reset', auth, adminOnly, tx(req => {
   audit(req.user, 'remise_a_zero', JSON.stringify(n));
   return n;
 }));
+/* ---- Options (Administration) ---- */
+app.get('/api/options', auth, salesOnly, (req, res) => res.json({ ...O(), email_ready: brevoReady() }));
+app.post('/api/options', auth, adminOnly, tx(req => {
+  const x = req.body || {}; const o = { ...O() };
+  for (const k of ['email_voucher', 'email_expiry_reminder', 'birthday_sellers_can_offer', 'birthday_auto_points', 'birthday_auto_email', 'levels_enabled', 'welcome_bonus_enabled', 'special_day_enabled', 'weekly_backup'])
+    if (x[k] !== undefined) o[k] = !!x[k];
+  const int = (v, lo, hi, def) => { const n = Math.floor(Number(v)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def; };
+  if (x.reminder_days !== undefined) o.reminder_days = int(x.reminder_days, 1, 180, 30);
+  if (x.birthday_suggested_points !== undefined) o.birthday_suggested_points = int(x.birthday_suggested_points, 0, 1000, 20);
+  if (x.welcome_bonus_points !== undefined) o.welcome_bonus_points = int(x.welcome_bonus_points, 0, 1000, 20);
+  if (x.special_day_multiplier !== undefined) { const m = Number(String(x.special_day_multiplier).replace(',', '.')); o.special_day_multiplier = m >= 1 && m <= 10 ? m : 2; }
+  if (x.special_day_label !== undefined) o.special_day_label = clean(x.special_day_label, 60) || 'Journée spéciale';
+  if (x.backup_email !== undefined) { const e = clean(x.backup_email, 120).toLowerCase(); if (e && !validEmail(e)) bad("L'adresse de sauvegarde semble incomplète."); o.backup_email = e; }
+  if (Array.isArray(x.levels)) {
+    const lv = x.levels.map(l => ({ name: clean(l.name, 30), min: Math.max(0, Math.floor(Number(l.min) || 0)) })).filter(l => l.name).slice(0, 6);
+    if (lv.length) { lv.sort((a, b) => a.min - b.min); lv[0].min = 0; o.levels = lv; }
+  }
+  db.settings.options = o;
+  audit(req.user, 'options', JSON.stringify(o).slice(0, 280));
+  return o;
+}));
+app.post('/api/admin/run-daily', auth, adminOnly, async (req, res) => { await runDaily(true); res.json({ ok: true }); });
+
+/* ---- Anniversaires ---- */
+app.get('/api/birthdays', auth, salesOnly, read(req => {
+  const days = Math.min(31, Math.max(0, Number(req.query.days) || 7));
+  return liveCustomers().map(c => ({ c, d: birthdayIn(c, days) })).filter(x => x.d !== null).sort((a, b) => a.d - b.d)
+    .map(({ c, d }) => ({ id: c.id, first_name: c.first_name, last_name: c.last_name, phone: c.phone, birth_date: c.birth_date, in_days: d, given_this_year: birthdayGivenThisYear(c), points: c.points }));
+}));
+app.post('/api/customers/:id/birthday-bonus', auth, salesOnly, tx(req => {
+  if (req.user.role === 'seller' && !O().birthday_sellers_can_offer) bad("Le bonus d'anniversaire est offert par Michelle ou l'administrateur.", 403);
+  const c = customerById(req.params.id);
+  const pts = Math.floor(Number((req.body || {}).points));
+  if (!(pts > 0 && pts <= 1000)) bad('Indiquez un nombre de points entre 1 et 1000.');
+  if (birthdayIn(c, 31) === null && !c.birth_date) bad("Sa date de naissance n'est pas renseignée : complétez sa fiche d'abord.");
+  if (birthdayGivenThisYear(c)) bad("Le bonus d'anniversaire a déjà été offert cette année.");
+  const made = giveBirthdayBonus(c, pts, req.user);
+  audit(req.user, 'bonus_anniversaire', `${c.first_name} ${c.last_name} +${pts}`);
+  return { points: c.points, vouchers_created: made.map(publicVoucher) };
+}));
+
+/* ---- Scan du QR code de la carte en caisse ---- */
+app.get('/api/customers/by-token/:token', auth, salesOnly, read(req => {
+  const c = db.customers.find(x => x.public_token === req.params.token && !x.deleted); if (!c) bad('Carte inconnue.', 404);
+  return { id: c.id };
+}));
+
+/* ---- Import de clientes existantes (Administration) ---- */
+function parseDateFr(s) { s = String(s || '').trim(); let m; if ((m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/))) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return `${m[1]}-${m[2]}-${m[3]}`; return ''; }
+app.post('/api/import', auth, adminOnly, tx(req => {
+  const rows = Array.isArray((req.body || {}).rows) ? req.body.rows.slice(0, 5000) : []; const confirm = !!(req.body || {}).confirm;
+  const seen = new Set(liveCustomers().map(c => c.phone)); const ok = [], dup = [], bad_ = [];
+  for (const r of rows) {
+    const d = { first_name: clean(r.first_name, 60), last_name: clean(r.last_name, 60), phone: normPhone(r.phone), email: clean(r.email, 120).toLowerCase(),
+      birth_date: parseDateFr(r.birth_date), postal_code: clean(r.postal_code, 10), city: clean(r.city, 60), address: clean(r.address, 160),
+      points: Math.max(0, Math.floor(Number(r.points) || 0)) };
+    if (!d.last_name || !validPhone(d.phone) || (d.email && !validEmail(d.email))) { bad_.push(d); continue; }
+    if (seen.has(d.phone)) { dup.push(`${d.first_name} ${d.last_name}`); continue; }
+    seen.add(d.phone); ok.push(d);
+  }
+  if (confirm) {
+    const t = nowIso();
+    for (const d of ok) {
+      const c = { id: nextId('customers'), first_name: d.first_name || '-', last_name: d.last_name, phone: d.phone, email: d.email, birth_date: d.birth_date, address: d.address,
+        postal_code: d.postal_code, city: d.city, marketing_email: false, marketing_sms: false, terms_accepted_at: null, points: 0, public_token: newToken(), created_at: t, source: 'import' };
+      db.customers.push(c);
+      if (d.points > 0) { db.loyalty_adjustments.push({ id: nextId('loyalty_adjustments'), customer_id: c.id, delta: d.points, reason: 'Reprise du solde (import)', created_at: t, by_user: req.user.username }); c.points = d.points; autoVouchers(c, req.user); }
+    }
+    audit(req.user, 'import', `${ok.length} cliente(s)`);
+  }
+  return { ok: ok.length, duplicates: dup, invalid: bad_.length, imported: confirm };
+}));
+
 app.get('/api/audit', auth, adminOnly, read(() => db.audit.slice(-200).reverse()));
 
 /* ======================= Exports ======================= */
 
 function csv(rows) { const e = v => { let s = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(s) && !/^-?\d/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; }; return '﻿' + rows.map(r => r.map(e).join(';')).join('\r\n'); }
 function sendCsv(res, name, rows) { res.set('Content-Type', 'text/csv; charset=utf-8').set('Content-Disposition', `attachment; filename="${name}"`).send(csv(rows)); }
+function customersCsv() {
+  return csv([['Prénom', 'Nom', 'Téléphone', 'E-mail', 'Date de naissance', 'Adresse', 'Code postal', 'Ville', 'Points', 'Bons actifs', 'Offres e-mail', 'Offres SMS', 'Inscription', 'Suppression demandée'],
+    ...liveCustomers().map(c => [c.first_name, c.last_name, c.phone, c.email, c.birth_date, c.address, c.postal_code, c.city, c.points, activeVouchers(c.id).length,
+      c.marketing_email ? 'oui' : 'non', c.marketing_sms ? 'oui' : 'non', c.created_at, c.deletion_requested_at || ''])]);
+}
+function purchasesCsv() {
+  const names = Object.fromEntries(db.customers.map(c => [c.id, c]));
+  return csv([['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Points', 'Boutique', 'Par', 'Annulé'],
+    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), p.points, p.store || '', p.by_user, p.cancelled ? 'oui' : 'non']; })]);
+}
 app.get('/api/export/customers.csv', auth, adminOnly, async (req, res) => {
   audit(req.user, 'export_clientes', ''); persist().catch(() => {});
   sendCsv(res, 'esprit-mode-clientes.csv', [['Prénom', 'Nom', 'Téléphone', 'E-mail', 'Date de naissance', 'Adresse', 'Code postal', 'Ville', 'Points', 'Bons actifs', 'Offres e-mail', 'Offres SMS', 'Inscription', 'Suppression demandée'],
@@ -605,8 +731,20 @@ app.get('/api/export/purchases.csv', auth, adminOnly, async (req, res) => {
 /* ======================= Campagnes (consentement obligatoire) ======================= */
 
 const CHANNELS = ['app', 'email', 'sms', 'whatsapp', 'facebook', 'instagram'];
-function recipients(channel) {
-  const base = liveCustomers().filter(c => !c.deletion_requested_at);
+const AUDIENCES = { all: 'Toutes les clientes', inactive: 'Sans achat depuis 3 mois', near: 'Proches du bon (moins de 50 points)', vouchers: 'Avec un bon à utiliser',
+  birthday_month: 'Anniversaire dans les 30 jours', 'store:Général de Gaulle': 'Clientes du Général de Gaulle', 'store:Clemenceau': 'Clientes de Clemenceau' };
+function inAudience(c, aud) {
+  if (!aud || aud === 'all') return true;
+  const live = db.purchases.filter(p => p.customer_id === c.id && !p.cancelled).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (aud === 'inactive') return !live[0] || (Date.now() - new Date(live[0].created_at)) > 90 * DAY;
+  if (aud === 'near') return c.points >= S().threshold - 50;
+  if (aud === 'vouchers') return activeVouchers(c.id).length > 0;
+  if (aud === 'birthday_month') return birthdayIn(c, 30) !== null;
+  if (aud.startsWith('store:')) return !!live[0] && live[0].store === aud.slice(6);
+  return true;
+}
+function recipients(channel, aud) {
+  const base = liveCustomers().filter(c => !c.deletion_requested_at && inAudience(c, aud));
   if (channel === 'email') return base.filter(c => c.marketing_email && c.email);
   if (channel === 'sms' || channel === 'whatsapp') return base.filter(c => c.marketing_sms && c.phone);
   return [];
@@ -615,8 +753,10 @@ const EMAIL_DAILY_LIMIT = 300;
 const brevoReady = () => !!(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
 const todayKey = () => new Date().toLocaleDateString('fr-CA');
 const emailsLeft = () => Math.max(0, EMAIL_DAILY_LIMIT - (Number(db.email_log[todayKey()]) || 0));
-app.get('/api/campaigns/audience', auth, managerOnly, read(() => ({
-  total: liveCustomers().length, email: recipients('email').length, sms: recipients('sms').length, whatsapp: recipients('whatsapp').length,
+app.get('/api/campaigns/audience', auth, managerOnly, read(req => ({
+  audiences: AUDIENCES, audience: String(req.query.aud || 'all'),
+  total: liveCustomers().filter(c => inAudience(c, String(req.query.aud || 'all'))).length,
+  email: recipients('email', String(req.query.aud || 'all')).length, sms: recipients('sms', String(req.query.aud || 'all')).length, whatsapp: recipients('whatsapp', String(req.query.aud || 'all')).length,
   email_ready: brevoReady(), email_left_today: emailsLeft()
 })));
 app.get('/api/campaigns', auth, managerOnly, read(() => [...db.campaigns].sort((a, b) => b.created_at.localeCompare(a.created_at))));
@@ -626,8 +766,9 @@ app.post('/api/campaigns', auth, managerOnly, tx(req => {
   if (!title || !message) bad('Titre et message obligatoires.');
   const channels = Object.fromEntries(CHANNELS.map(k => [k, !!x[k]]));
   if (!CHANNELS.some(k => channels[k])) bad('Choisissez au moins un canal.');
-  const counts = Object.fromEntries(['email', 'sms', 'whatsapp'].filter(k => channels[k]).map(k => [k, recipients(k).length]));
-  const c = { id: nextId('campaigns'), title, message, media_url: clean(x.media_url, 300), channels, recipients: counts, status: 'brouillon', created_at: nowIso(), created_by: req.user.username };
+  const audience = Object.prototype.hasOwnProperty.call(AUDIENCES, x.audience) ? x.audience : 'all';
+  const counts = Object.fromEntries(['email', 'sms', 'whatsapp'].filter(k => channels[k]).map(k => [k, recipients(k, audience).length]));
+  const c = { id: nextId('campaigns'), title, message, media_url: clean(x.media_url, 300), channels, audience, recipients: counts, status: 'brouillon', created_at: nowIso(), created_by: req.user.username };
   db.campaigns.push(c);
   return c;
 }));
@@ -647,7 +788,7 @@ app.get('/api/campaigns/:id/recipients', auth, managerOnly, read(req => {
   const c = campaignById(req.params.id); const ch = String(req.query.channel || '');
   if (!['sms', 'whatsapp'].includes(ch)) bad('Canal invalide');
   const done = new Set(((c.manual_sent || {})[ch]) || []);
-  return recipients(ch).map(x => ({ id: x.id, first_name: x.first_name, last_name: x.last_name, phone: x.phone, done: done.has(x.id) }));
+  return recipients(ch, c.audience).map(x => ({ id: x.id, first_name: x.first_name, last_name: x.last_name, phone: x.phone, done: done.has(x.id) }));
 }));
 app.post('/api/campaigns/:id/mark', auth, managerOnly, tx(req => {
   const c = campaignById(req.params.id); const { channel, customer_id } = req.body || {};
@@ -667,10 +808,12 @@ function emailHtml(c, cust, req) {
     <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 59 av. du Général de Gaulle et 47 av. Georges Clemenceau, 94700 Maisons-Alfort — Michelle : 06 62 55 24 87 — <a href="${baseUrl(req)}/conditions.html" style="color:#697177">Conditions d'utilisation</a><br>
     Vous recevez cet e-mail car vous avez accepté les offres d'esprit mode. <a href="${baseUrl(req)}/desinscription?token=${cust.public_token}" style="color:#697177">Se désinscrire</a></div></div></div>`;
 }
-async function brevoSend(to, subject, html) {
+async function brevoSend(to, subject, html, attachments) {
+  const body = { sender: { email: process.env.BREVO_SENDER_EMAIL, name: process.env.BREVO_SENDER_NAME || 'esprit mode' }, to: [{ email: to.email, name: `${to.first_name || ''} ${to.last_name || ''}`.trim() || to.email }], subject, htmlContent: html };
+  if (attachments && attachments.length) body.attachment = attachments;
   const r = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST', headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({ sender: { email: process.env.BREVO_SENDER_EMAIL, name: process.env.BREVO_SENDER_NAME || 'esprit mode' }, to: [{ email: to.email, name: `${to.first_name} ${to.last_name}` }], subject, htmlContent: html })
+    body: JSON.stringify(body)
   });
   if (!r.ok) { let m = ''; try { m = (await r.json()).message || ''; } catch (e) {} throw new Error(`Brevo ${r.status} ${m}`); }
 }
@@ -691,6 +834,79 @@ function sendWelcome(c, req) {
     .then(() => { const k = todayKey(); db.email_log = { [k]: (Number(db.email_log[k]) || 0) + 1 }; return persist(); })
     .catch(err => console.error('E-mail de bienvenue :', err.message));
 }
+/* ---- E-mails automatiques (chacun activable dans Administration > Options) ---- */
+function eH(s) { return String(s || '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
+function mailLayout(c, inner, unsub) {
+  const url = cardUrl(c, null);
+  return `<div style="background:#f7f3ee;padding:24px 12px;font-family:Arial,sans-serif;color:#222"><div style="max-width:560px;margin:auto;background:#fff;border-radius:16px;overflow:hidden">
+    <div style="background:#465157;color:#fff;padding:22px;font-size:26px;letter-spacing:2px">esprit mode</div>
+    <div style="padding:22px;font-size:16px;line-height:1.5">${inner}
+    <p><a href="${url}" style="display:inline-block;background:#465157;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">Ouvrir ma carte de fidélité</a></p>
+    <p style="font-size:13px;color:#697177">Si le bouton ne répond pas, appuyez longuement sur ce lien puis « Ouvrir dans Safari » :<br><a href="${url}" style="color:#465157;word-break:break-all">${url}</a></p></div>
+    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 59 av. du Général de Gaulle et 47 av. Georges Clemenceau, 94700 Maisons-Alfort — Michelle : 06 62 55 24 87 — <a href="${baseUrl(null)}/conditions.html" style="color:#697177">Conditions d'utilisation</a>${unsub ? `<br>Vous recevez cet e-mail car vous avez accepté les offres d'esprit mode. <a href="${baseUrl(null)}/desinscription?token=${c.public_token}" style="color:#697177">Se désinscrire</a>` : ''}</div></div></div>`;
+}
+async function mailCustomer(c, subject, html, what) {
+  if (!brevoReady() || !c.email || emailsLeft() < 1) return false;
+  try { await brevoSend(c, subject, html); const k = todayKey(); db.email_log = { [k]: (Number(db.email_log[k]) || 0) + 1 }; await persist(); return true; }
+  catch (e) { console.error(what + ' :', e.message); return false; }
+}
+function sendVoucherEmail(c, v) {
+  mailCustomer(c, `Carte pleine ! Votre bon d'achat de ${v.value_cents / 100} € esprit mode`, mailLayout(c,
+    `<p>Bonjour ${eH(c.first_name)},</p><p><b>Votre carte est pleine !</b> Un <b>bon d'achat de ${v.value_cents / 100} €</b> vous attend dans nos boutiques, valable jusqu'au <b>${new Date(v.expires_at).toLocaleDateString('fr-FR')}</b>.</p><p>À très bientôt chez esprit mode.</p>`, false), 'E-mail carte pleine');
+}
+function applyWelcomeBonus(c, user) {
+  const o = O(); const pts = Math.floor(Number(o.welcome_bonus_points) || 0);
+  if (!o.welcome_bonus_enabled || pts <= 0) return;
+  db.loyalty_adjustments.push({ id: nextId('loyalty_adjustments'), customer_id: c.id, delta: pts, reason: 'Bonus de bienvenue', created_at: nowIso(), by_user: user ? user.username : 'automatique' });
+  c.points += pts;
+}
+function giveBirthdayBonus(c, pts, user) {
+  const tag = 'Bonus anniversaire ' + new Date().getFullYear();
+  db.loyalty_adjustments.push({ id: nextId('loyalty_adjustments'), customer_id: c.id, delta: pts, reason: tag, created_at: nowIso(), by_user: user ? user.username : 'automatique' });
+  c.points += pts;
+  return autoVouchers(c, user);
+}
+/* Tâches quotidiennes : anniversaires automatiques, rappels d'expiration, sauvegarde hebdomadaire.
+   Elles tournent quand le serveur est éveillé (au plus une fois par jour). */
+let dailyRunning = false;
+async function runDaily(force) {
+  if (dailyRunning) return; const today = todayKey();
+  if (!force && db.meta.last_daily === today) return;
+  dailyRunning = true;
+  try {
+    db.meta.last_daily = today; const o = O();
+    for (const c of liveCustomers()) {
+      if (birthdayIn(c, 0) !== 0) continue;
+      if (o.birthday_auto_points && !birthdayGivenThisYear(c) && Number(o.birthday_suggested_points) > 0) giveBirthdayBonus(c, Math.floor(Number(o.birthday_suggested_points)), null);
+      if (o.birthday_auto_email && c.marketing_email && !c.deletion_requested_at && c.birthday_mail_year !== new Date().getFullYear()) {
+        c.birthday_mail_year = new Date().getFullYear();
+        await mailCustomer(c, 'Joyeux anniversaire de la part d\'esprit mode', mailLayout(c, `<p>Bonjour ${eH(c.first_name)},</p><p>Toute l'équipe <b>esprit mode</b> vous souhaite un très joyeux anniversaire !${o.birthday_auto_points && Number(o.birthday_suggested_points) > 0 ? ` <b>${Math.floor(Number(o.birthday_suggested_points))} points</b> ont été ajoutés à votre carte.` : ''}</p><p>Michelle et l'équipe</p>`, true), 'E-mail anniversaire');
+      }
+    }
+    if (o.email_expiry_reminder) {
+      const limit = Date.now() + (Number(o.reminder_days) || 30) * DAY;
+      for (const v of db.vouchers) {
+        if (voucherStatus(v) !== 'active' || v.reminded_at || new Date(v.expires_at).getTime() > limit) continue;
+        const c = db.customers.find(x => x.id === v.customer_id && !x.deleted); if (!c) continue;
+        v.reminded_at = nowIso();
+        await mailCustomer(c, `Votre bon d'achat de ${v.value_cents / 100} € expire bientôt`, mailLayout(c, `<p>Bonjour ${eH(c.first_name)},</p><p>Petit rappel : votre <b>bon d'achat de ${v.value_cents / 100} €</b> est valable jusqu'au <b>${new Date(v.expires_at).toLocaleDateString('fr-FR')}</b>. Passez nous voir pour en profiter !</p>`, false), 'Rappel expiration');
+      }
+    }
+    if (o.weekly_backup && brevoReady() && o.backup_email && (!db.meta.last_backup || Date.now() - new Date(db.meta.last_backup).getTime() > 7 * DAY - 3600000)) {
+      try {
+        const b64 = t => Buffer.from(t, 'utf8').toString('base64');
+        await brevoSend({ email: o.backup_email, first_name: 'esprit', last_name: 'mode' }, 'Sauvegarde hebdomadaire esprit mode — ' + new Date().toLocaleDateString('fr-FR'),
+          '<p>Ci-joint la sauvegarde hebdomadaire des clientes et des achats (fichiers CSV à ouvrir avec Excel). Conservez cet e-mail.</p>',
+          [{ name: 'esprit-mode-clientes-' + today + '.csv', content: b64(customersCsv()) }, { name: 'esprit-mode-achats-' + today + '.csv', content: b64(purchasesCsv()) }]);
+        db.meta.last_backup = nowIso(); audit(null, 'sauvegarde_hebdo', o.backup_email);
+      } catch (e) { console.error('Sauvegarde hebdomadaire :', e.message); }
+    }
+    await persist();
+  } catch (e) { console.error('Tâches quotidiennes :', e.message); }
+  finally { dailyRunning = false; }
+}
+setInterval(() => runDaily(false), 3600000).unref();
+
 let sending = false;
 app.post('/api/campaigns/:id/send-email', auth, managerOnly, async (req, res) => {
   try {
@@ -698,8 +914,8 @@ app.post('/api/campaigns/:id/send-email', auth, managerOnly, async (req, res) =>
     if (sending) bad('Un envoi est déjà en cours. Patientez.', 429);
     const c = campaignById(req.params.id);
     if (c.email_sent_at) bad('Cette campagne a déjà été envoyée par e-mail.');
-    const list = recipients('email');
-    if (!list.length) bad("Aucune cliente n'a accepté les offres par e-mail.");
+    const list = recipients('email', c.audience);
+    if (!list.length) bad("Aucune cliente de cette cible n'a accepté les offres par e-mail.");
     if (list.length > emailsLeft()) bad(`Limite gratuite : il reste ${emailsLeft()} e-mails aujourd'hui pour ${list.length} destinataires. Réessayez demain.`);
     sending = true;
     let ok = 0, failed = 0, lastErr = '';
@@ -759,5 +975,5 @@ app.get('/api/public/content', read(() => ({
 /* ======================= Lancement ======================= */
 
 bootstrap()
-  .then(() => app.listen(PORT, HOST, () => console.log(`esprit mode v${VERSION} : http://${HOST}:${PORT} — stockage ${pool ? 'PostgreSQL' : 'fichier local (tests uniquement)'}`)))
+  .then(() => { setTimeout(() => runDaily(false), 20000).unref(); return app.listen(PORT, HOST, () => console.log(`esprit mode v${VERSION} : http://${HOST}:${PORT} — stockage ${pool ? 'PostgreSQL' : 'fichier local (tests uniquement)'}`)); })
   .catch(e => { console.error('Démarrage impossible :', e); process.exit(1); });

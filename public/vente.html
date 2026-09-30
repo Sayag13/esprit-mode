@@ -13,7 +13,9 @@
   <div class="card" id="searchCard">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Rechercher une cliente</h2>
       <select id="store" class="auto" style="width:auto" aria-label="Boutique"><option value="">Boutique…</option><option>Général de Gaulle</option><option>Clemenceau</option></select></div>
-    <input id="q" type="search" placeholder="Téléphone, nom ou e-mail" autocomplete="off" autofocus>
+    <div class="row"><input id="q" type="search" placeholder="Téléphone, nom ou e-mail" autocomplete="off" autofocus><button type="button" class="small secondary auto" id="scanBtn">Scanner la carte</button></div>
+    <div id="scanBox" class="hidden" style="margin-top:8px"><video id="scanVideo" playsinline muted style="width:100%;border-radius:12px;background:#000"></video>
+      <p class="small muted">Visez le QR code de la carte de la cliente (sur son téléphone).</p><button type="button" class="small secondary" id="scanStop">Fermer la caméra</button></div>
     <div id="hint" class="small muted">Tapez les premiers chiffres du téléphone ou le nom.</div>
     <div id="results"></div>
     <button class="secondary" id="newBtn" style="margin-top:10px">+ Nouvelle cliente</button>
@@ -25,6 +27,7 @@
     <h2>Nouvelle cliente</h2>
     <div class="row"><input id="nf" placeholder="Prénom *"><input id="nl" placeholder="Nom *"></div>
     <input id="np" type="tel" inputmode="tel" placeholder="Téléphone *"><input id="ne" type="email" placeholder="E-mail *">
+    <label class="field">Date de naissance (facultatif, pour son anniversaire)<input id="nb" type="date"></label>
     <div id="dupWarn"></div>
     <label class="check"><input id="nt" type="checkbox"> <span>La cliente accepte les conditions et la politique de confidentialité * — <a href="/conditions.html" target="_blank" rel="noopener">les lui montrer</a></span></label>
     <label class="check"><input id="nme" type="checkbox"> <span>La cliente souhaite recevoir les offres par e-mail</span></label>
@@ -36,10 +39,11 @@
 </main>
 <script src="app.js"></script>
 <script>
-let SET = null, CUR = null, timer = null, lastList = [];
+const PREVPTS = {}; // points déjà affichés, pour animer les nouveaux tampons après un achat
+let SET = null, CUR = null, timer = null, lastList = [], OPT = {}, ME = null;
 try { $('store').value = localStorage.getItem('store') || ''; } catch (e) {}
 $('store').addEventListener('change', () => { try { localStorage.setItem('store', $('store').value); } catch (e) {} toast($('store').value ? 'Boutique : ' + $('store').value : 'Boutique non précisée'); });
-(async () => { if (!(await staffNav('vente'))) return; try { SET = await api('/api/settings'); } catch (e) { toast(e.message, true); } })();
+(async () => { ME = await staffNav('vente'); if (!ME) return; try { SET = await api('/api/settings'); OPT = await api('/api/options'); } catch (e) { toast(e.message, true); } })();
 
 $('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(find, 200); });
 $('q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); if (lastList.length === 1) openClient(lastList[0].id); } });
@@ -66,18 +70,23 @@ async function openClient(id, justCreated) {
 }
 function preview() {
   const a = Number(String($('amount')?.value || '').replace(',', '.'));
-  const pts = a > 0 ? Math.floor(a * SET.points_per_euro) : 0, tot = CUR.customer.points + pts;
+  const mult = OPT.special_day_enabled ? Number(OPT.special_day_multiplier) || 1 : 1;
+  const pts = a > 0 ? Math.floor(a * SET.points_per_euro * mult) : 0, tot = CUR.customer.points + pts;
   $('prev').innerHTML = `<div class="kpi"><b>+${pts}</b><span>points gagnés</span></div><div class="kpi"><b>${tot >= SET.threshold && SET.auto_voucher ? tot % SET.threshold : tot}</b><span>nouveau solde</span></div>` +
     (tot >= SET.threshold && SET.auto_voucher ? `<div class="kpi"><b>${euros0(SET.voucher_value * Math.floor(tot / SET.threshold))}</b><span>bon créé : carte pleine</span></div>` : '');
 }
 function showClient() {
   const c = CUR.customer, act = CUR.vouchers.filter(v => v.status === 'active');
   $('clientCard').classList.remove('hidden');
+  const _prev = PREVPTS[c.id]; setTimeout(() => { PREVPTS[c.id] = c.points; }, 0);
   $('clientCard').innerHTML = `
     ${CUR.justCreated ? `<div class="ok" style="margin-bottom:12px"><b>Carte créée !</b> Envoyez-lui maintenant son lien : elle l'ouvrira d'un geste sur son téléphone${c.email ? ' (elle le reçoit aussi par e-mail)' : ''}.${cardLinkButtons(c, CUR.card_url)}</div>` : ''}
     <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(c.first_name)} ${esc(c.last_name)}</h2><div class="muted small">${esc(fmtPhone(c.phone))} · ${c.points} points · encore ${CUR.stats.remaining} pour le bon</div></div>
       <button type="button" class="small secondary auto" id="closeClient">Changer</button></div>
     ${c.deletion_requested_at ? '<p class="warn">Cette cliente a demandé la suppression de son compte.</p>' : ''}
+    ${CUR.level ? `<p class="small"><span class="tag">Niveau ${esc(CUR.level.name)}</span>${CUR.level.next ? ` encore ${CUR.level.next.remaining} € pour ${esc(CUR.level.next.name)}` : ''}</p>` : ''}
+    ${OPT.special_day_enabled ? `<p class="ok small">${esc(OPT.special_day_label)} : points × ${OPT.special_day_multiplier}</p>` : ''}
+    ${birthdayBox(CUR)}
     ${$('store').value ? '' : '<p class="warn small">Choisissez la boutique en haut (Général de Gaulle ou Clemenceau) : elle est notée sur chaque achat et retenue sur cet appareil.</p>'}
     <form id="buy" novalidate>
       <label class="field">Montant payé (€)<input id="amount" class="big-amount" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
@@ -85,7 +94,7 @@ function showClient() {
       <div class="grid" id="prev"></div>
       <button id="buyBtn" style="margin-top:10px">Valider l'achat</button><div id="buyMsg"></div>
     </form>
-    ${stampGrid(c.points, SET ? SET.threshold : 300)}
+    ${stampGrid(c.points, SET ? SET.threshold : 300, _prev)}
     <details><summary class="small"><b>Reprendre une carte papier</b></summary>
       <p class="small muted">Saisissez le total tamponné sur sa carte papier (en euros).</p>
       <div class="row"><input id="paperAmt" inputmode="numeric" placeholder="ex. 180"><button type="button" class="small auto" id="paperBtn">Ajouter les points</button></div></details>
@@ -98,6 +107,45 @@ function showClient() {
   $('closeClient').addEventListener('click', () => { $('clientCard').classList.add('hidden'); CUR = null; $('q').focus(); });
   $('paperBtn').addEventListener('click', paper);
 }
+function birthdayBox(P) {
+  const b = P.birthday; if (!b || b.in_days === null || b.in_days === undefined) return '';
+  const when = b.in_days === 0 ? "aujourd'hui" : b.in_days === 1 ? 'demain' : `dans ${b.in_days} jours`;
+  const can = ME && (ME.role !== 'seller' || OPT.birthday_sellers_can_offer);
+  if (b.given_this_year) return `<p class="ok small">🎂 Anniversaire ${when} — bonus déjà offert cette année.</p>`;
+  return `<div class="warn small" style="margin:8px 0">🎂 <b>Anniversaire ${when} !</b>${can ? `<div class="row" style="margin-top:6px"><input id="bdPts" type="number" min="1" max="1000" value="${Number(OPT.birthday_suggested_points) || 20}" style="max-width:110px"><button type="button" class="small auto" id="bdBtn">Offrir ces points</button></div>` : ' Prévenez Michelle pour le bonus.'}</div>`;
+}
+document.addEventListener('click', async e => {
+  if (!e.target.closest('#bdBtn') || !CUR) return;
+  try { const r = await api('/api/customers/' + CUR.customer.id + '/birthday-bonus', { method: 'POST', body: { points: $('bdPts').value } });
+    toast('Bonus anniversaire offert' + (r.vouchers_created.length ? ' — carte pleine, bon créé' : '')); await openClient(CUR.customer.id); }
+  catch (err) { toast(err.message, true); }
+});
+/* Scan du QR code de la carte avec la caméra (gratuit ; nécessite l'autorisation de la caméra) */
+let scanStream = null, scanTimer = null, detector = null;
+async function loadJsQR() { if (window.jsQR) return; await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js'; s.onload = ok; s.onerror = ko; document.head.appendChild(s); }); }
+function stopScan() { clearInterval(scanTimer); if (scanStream) scanStream.getTracks().forEach(t => t.stop()); scanStream = null; $('scanBox').classList.add('hidden'); }
+async function onCode(text) {
+  const m = String(text).match(/token=([a-f0-9]{20,})/i); if (!m) { toast("Ce QR code n'est pas une carte esprit mode.", true); return; }
+  stopScan();
+  try { const r = await api('/api/customers/by-token/' + m[1]); await openClient(r.id); } catch (err) { toast(err.message, true); }
+}
+$('scanBtn').addEventListener('click', async () => {
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const v = $('scanVideo'); v.srcObject = scanStream; await v.play(); $('scanBox').classList.remove('hidden');
+    if ('BarcodeDetector' in window) { try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; } }
+    if (!detector) await loadJsQR();
+    const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true });
+    scanTimer = setInterval(async () => {
+      if (!v.videoWidth) return;
+      if (detector) { try { const r = await detector.detect(v); if (r[0]) onCode(r[0].rawValue); } catch (e) {} return; }
+      cv.width = v.videoWidth; cv.height = v.videoHeight; ctx.drawImage(v, 0, 0);
+      const img = ctx.getImageData(0, 0, cv.width, cv.height); const r = window.jsQR && window.jsQR(img.data, cv.width, cv.height);
+      if (r && r.data) onCode(r.data);
+    }, 350);
+  } catch (e) { stopScan(); toast("Caméra indisponible : autorisez l'accès à la caméra, ou cherchez la cliente par son téléphone.", true); }
+});
+$('scanStop').addEventListener('click', stopScan);
 async function buy(e) {
   e.preventDefault(); const b = $('buyBtn'); b.disabled = true; $('buyMsg').className = ''; $('buyMsg').textContent = '';
   try {
@@ -132,8 +180,8 @@ $('newCard').addEventListener('submit', async e => {
   e.preventDefault(); const b = $('createBtn'); b.disabled = true; $('msg').className = ''; $('msg').textContent = '';
   try {
     const c = await api('/api/customers', { method: 'POST', body: { first_name: $('nf').value, last_name: $('nl').value, phone: $('np').value, email: $('ne').value,
-      terms_accepted: $('nt').checked, marketing_email: $('nme').checked, marketing_sms: $('nms').checked } });
-    ['nf', 'nl', 'np', 'ne'].forEach(i => $(i).value = ''); ['nt', 'nme', 'nms'].forEach(i => $(i).checked = false);
+      birth_date: $('nb').value, terms_accepted: $('nt').checked, marketing_email: $('nme').checked, marketing_sms: $('nms').checked } });
+    ['nf', 'nl', 'np', 'ne', 'nb'].forEach(i => $(i).value = ''); ['nt', 'nme', 'nms'].forEach(i => $(i).checked = false);
     toast('Carte créée'); await openClient(c.id, true);
   } catch (err) { $('msg').className = 'err'; $('msg').textContent = err.message; }
   b.disabled = false;

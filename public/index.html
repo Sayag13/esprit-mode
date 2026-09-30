@@ -42,7 +42,7 @@
   <div class="card"><h2>Suivez esprit mode</h2><p class="muted">Les nouveautés et les vidéos de Michelle.</p>
     <div class="soc"><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener">Instagram</a><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener">Facebook</a></div></div>
 
-  <div class="card"><h2>Nos boutiques</h2><p><b>59 avenue du Général de Gaulle</b><br>94700 Maisons-Alfort</p><p><b>47 avenue Georges Clemenceau</b><br>94700 Maisons-Alfort</p><p>☎ Michelle : 06 62 55 24 87</p></div>
+  <div id="about"></div>
 
   <div class="card small" id="confidentialite"><h2>Confidentialité</h2><p><a href="/conditions.html">Conditions d'utilisation complètes du programme</a></p>
     <p><b>Responsable :</b> SARL EMS 26 (boutiques esprit mode, Maisons-Alfort) — espritmode13@gmail.com.</p>
@@ -66,6 +66,7 @@ $('reg').addEventListener('submit', async e => {
 });
 $('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));
 $('installBox').innerHTML = installBox('Ajoutez esprit mode à votre téléphone');
+$('about').innerHTML = aboutHtml();
 try { const t = localStorage.getItem('card_token'); if (t) { $('myCard').className = 'card'; $('myCard').innerHTML = `<h2>Ma carte</h2><a href="/carte.html?token=${encodeURIComponent(t)}" style="display:block;text-align:center;background:var(--ink);color:#fff;border-radius:12px;padding:13px;text-decoration:none;font-weight:600">Ouvrir ma carte de fidélité</a>`; if (isStandalone()) location.replace('/carte.html?token=' + encodeURIComponent(t)); } } catch (e) {}
 </script>
 </body></html>

@@ -18,7 +18,10 @@
 
   <div class="card"><h2>Bons d'achat en cours</h2><div id="vouchers" class="small muted">Chargement…</div></div>
 
+  <div class="card"><h2>Anniversaires à venir</h2><p class="small muted">Les 30 prochains jours. Vous choisissez le bonus pour chaque cliente (une fois par an).</p><div id="bdays" class="small">Chargement…</div></div>
+
   <form class="card" id="camp" novalidate><h2>Préparer une campagne</h2>
+    <label class="field">À qui ?<select id="aud_sel"></select></label>
     <div id="aud" class="grid"></div>
     <p class="small muted">Seules les clientes qui ont accepté les offres par ce canal sont comptées. Les clientes qui ont demandé la suppression de leur compte sont toujours exclues.</p>
     <input id="title" placeholder="Titre de la promotion *"><textarea id="message" placeholder="Votre message… *"></textarea>
@@ -47,8 +50,8 @@
 </main>
 <script src="app.js"></script>
 <script>
-let ME = null, P = null, timer = null;
-(async () => { ME = await staffNav('boutique'); if (!ME) return; loadVouchers(); loadAudience(); loadCampaigns(); loadVideos(); const cid = new URLSearchParams(location.search).get('c'); if (cid) openProfile(Number(cid)); })();
+let ME = null, P = null, timer = null, OPT = {};
+(async () => { ME = await staffNav('boutique'); if (!ME) return; try { OPT = await api('/api/options'); } catch (e) {} loadVouchers(); loadAudience(); loadCampaigns(); loadVideos(); loadBirthdays(); const cid = new URLSearchParams(location.search).get('c'); if (cid) openProfile(Number(cid)); })();
 
 $('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 200); });
 async function search() {
@@ -70,7 +73,8 @@ function renderProfile() {
   $('profile').innerHTML = `
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(c.first_name)} ${esc(c.last_name)}</h2><button class="small secondary auto" id="closeP">Fermer</button></div>
     ${c.deletion_requested_at ? `<p class="warn">Suppression demandée le ${fdate(c.deletion_requested_at)}. L'administrateur peut supprimer la fiche.</p>` : ''}
-    <div class="grid"><div class="kpi"><b>${s.points}</b><span>points (encore ${s.remaining})</span></div><div class="kpi"><b>${s.purchases}</b><span>achats</span></div><div class="kpi"><b>${money(s.total_euros)}</b><span>dépensés</span></div><div class="kpi"><b>${fdate(s.last_purchase)}</b><span>dernier achat</span></div></div>
+    <div class="grid"><div class="kpi"><b>${s.points}</b><span>points (encore ${s.remaining})</span></div><div class="kpi"><b>${s.purchases}</b><span>achats</span></div><div class="kpi"><b>${money(s.total_euros)}</b><span>dépensés</span></div><div class="kpi"><b>${s.avg_basket ? money(s.avg_basket) : '—'}</b><span>panier moyen</span></div><div class="kpi"><b>${s.frequency_days ? 'tous les ' + s.frequency_days + ' j' : '—'}</b><span>fréquence d'achat</span></div><div class="kpi"><b>${fdate(s.last_purchase)}</b><span>dernier achat${s.last_store ? ' (' + esc(s.last_store) + ')' : ''}</span></div>${P.level ? `<div class="kpi"><b>${esc(P.level.name)}</b><span>niveau${P.level.next ? ' — encore ' + P.level.next.remaining + ' € pour ' + esc(P.level.next.name) : ''}</span></div>` : ''}</div>
+    ${P.birthday && P.birthday.in_days !== null && P.birthday.in_days !== undefined ? (P.birthday.given_this_year ? '<p class="ok small">🎂 Anniversaire proche — bonus déjà offert cette année.</p>' : `<div class="warn small">🎂 <b>Anniversaire ${P.birthday.in_days === 0 ? "aujourd'hui" : 'dans ' + P.birthday.in_days + ' jour(s)'}</b><div class="row" style="margin-top:6px"><input id="pbdPts" type="number" min="1" max="1000" value="${Number(OPT.birthday_suggested_points) || 20}" style="max-width:110px"><button type="button" class="small auto" data-pbd="${c.id}">Offrir ces points</button></div></div>`) : ''}
     ${stampGrid(s.points, 300)}
     <h3>Coordonnées</h3>
     <form id="edit" novalidate>
@@ -102,6 +106,7 @@ $('profile').addEventListener('click', e => {
   if (t.dataset.use) act(() => api('/api/vouchers/' + t.dataset.use + '/use', { method: 'POST' }), 'Bon utilisé');
   else if (t.dataset.vcancel) { if (confirm('Annuler ce bon et rendre les points à la cliente ?')) act(() => api('/api/vouchers/' + t.dataset.vcancel + '/cancel', { method: 'POST' }), 'Bon annulé'); }
   else if (t.dataset.mkv) act(() => api('/api/customers/' + t.dataset.mkv + '/vouchers', { method: 'POST' }), 'Bon créé');
+  else if (t.dataset.pbd) act(() => api('/api/customers/' + t.dataset.pbd + '/birthday-bonus', { method: 'POST', body: { points: $('pbdPts').value } }), 'Bonus anniversaire offert');
   else if (t.dataset.pcancel) { if (confirm('Annuler cet achat ? Les points seront retirés.')) act(() => api('/api/purchases/' + t.dataset.pcancel + '/cancel', { method: 'POST' }), 'Achat annulé'); }
 });
 async function saveEdit(e) {
@@ -118,8 +123,21 @@ async function loadVouchers() {
   } catch (e) { $('vouchers').textContent = e.message; }
 }
 let AUD = null;
+async function loadBirthdays() {
+  try { const d = await api('/api/birthdays?days=30');
+    $('bdays').innerHTML = d.map(b => `<div class="item"><div><b>${esc(b.first_name)} ${esc(b.last_name)}</b> <span class="muted">${b.in_days === 0 ? "aujourd'hui" : b.in_days === 1 ? 'demain' : 'dans ' + b.in_days + ' jours'} · ${b.points} pts</span></div>
+      <div>${b.given_this_year ? '<span class="tag ok">bonus offert</span>' : `<input type="number" min="1" max="1000" value="${Number(OPT.birthday_suggested_points) || 20}" data-bdi="${b.id}" style="width:90px;display:inline-block"> <button class="small" data-bdg="${b.id}">Offrir</button>`} <button class="small secondary" data-open="${b.id}">Fiche</button></div></div>`).join('') || '<p class="muted">Aucun anniversaire dans les 30 prochains jours (ou dates de naissance non renseignées).</p>';
+  } catch (e) { $('bdays').textContent = e.message; }
+}
+$('bdays').addEventListener('click', async e => {
+  const b = e.target.closest('[data-bdg]'); if (!b) return;
+  const inp = document.querySelector(`[data-bdi="${b.dataset.bdg}"]`);
+  try { await api('/api/customers/' + b.dataset.bdg + '/birthday-bonus', { method: 'POST', body: { points: inp.value } }); toast('Bonus anniversaire offert'); loadBirthdays(); loadVouchers(); }
+  catch (err) { toast(err.message, true); }
+});
 async function loadAudience() {
-  try { AUD = await api('/api/campaigns/audience');
+  try { const sel = $('aud_sel'); AUD = await api('/api/campaigns/audience?aud=' + encodeURIComponent(sel.value || 'all'));
+    if (!sel.options.length) { sel.innerHTML = Object.entries(AUD.audiences).map(([k, l]) => `<option value="${esc(k)}">${esc(l)}</option>`).join(''); }
     $('aud').innerHTML = `<div class="kpi"><b>${AUD.total}</b><span>clientes</span></div><div class="kpi"><b>${AUD.email}</b><span>acceptent l'e-mail</span></div><div class="kpi"><b>${AUD.sms}</b><span>acceptent SMS / WhatsApp</span></div>` +
       (AUD.email_ready ? `<div class="kpi"><b>${AUD.email_left_today}</b><span>e-mails gratuits restants aujourd'hui</span></div>` : `<div class="kpi"><b>—</b><span>envoi e-mail pas encore activé</span></div>`);
   } catch (e) {}
@@ -139,7 +157,7 @@ async function loadCampaigns() {
       btns.push(`<button class="small danger" data-cdel="${c.id}">Supprimer</button>`);
       return `<div class="item" style="display:block"><b>${esc(c.title)}</b><p style="white-space:pre-line;margin:6px 0">${esc(c.message)}</p>${c.media_url ? `<p class="small">Média : ${esc(c.media_url)}</p>` : ''}
         <div>${Object.entries(ch).filter(x => x[1]).map(x => `<span class="tag">${esc(CH[x[0]] || x[0])}</span>`).join(' ')}</div>
-        <small class="muted">${fdt(c.created_at)} — ${esc(c.created_by || '')}</small><div class="row" style="margin-top:6px">${btns.join('')}</div></div>`;
+        <small class="muted">${fdt(c.created_at)} — ${esc(c.created_by || '')}${c.audience && c.audience !== 'all' && AUD ? ' — cible : ' + esc(AUD.audiences[c.audience] || c.audience) : ''}</small><div class="row" style="margin-top:6px">${btns.join('')}</div></div>`;
     }).join('') || '<p>Aucune campagne.</p>';
   } catch (e) { $('campList').textContent = e.message; }
 }
@@ -173,7 +191,7 @@ $('campList').addEventListener('click', async e => {
   try {
     if (b.dataset.send) {
       const c = CAMPS.find(x => x.id === Number(b.dataset.send));
-      if (!confirm(`Envoyer « ${c.title} » par e-mail à ${AUD ? AUD.email : ''} cliente(s) ? L'envoi ne peut pas être annulé.`)) return;
+      if (!confirm(`Envoyer « ${c.title} » par e-mail${c.recipients && c.recipients.email !== undefined ? ' (environ ' + c.recipients.email + ' cliente(s))' : ''} ? L'envoi ne peut pas être annulé.`)) return;
       b.disabled = true; b.textContent = 'Envoi en cours…';
       const r = await api('/api/campaigns/' + c.id + '/send-email', { method: 'POST' });
       toast(`${r.sent} e-mail(s) envoyé(s)${r.failed ? ', ' + r.failed + ' échec(s)' : ''}`);
@@ -200,10 +218,11 @@ $('vList').addEventListener('click', async e => {
     else if (b.dataset.vdel) { if (!confirm('Supprimer cette vidéo ?')) return; await api('/api/videos/' + b.dataset.vdel, { method: 'DELETE' }); }
     loadVideos(); } catch (err) { toast(err.message, true); }
 });
+$('aud_sel').addEventListener('change', loadAudience);
 $('camp').addEventListener('submit', async e => {
   e.preventDefault(); $('campBtn').disabled = true;
   try {
-    const body = { title: $('title').value, message: $('message').value, media_url: $('media').value };
+    const body = { title: $('title').value, message: $('message').value, media_url: $('media').value, audience: $('aud_sel').value || 'all' };
     for (const k of ['app', 'email', 'sms', 'whatsapp', 'facebook', 'instagram']) body[k] = $('ch_' + k).checked;
     const c = await api('/api/campaigns', { method: 'POST', body });
     $('campMsg').className = 'ok'; $('campMsg').textContent = 'Campagne enregistrée' + (c.channels.app ? ' et affichée sur la carte des clientes' : '') + '. Pour l’envoyer, utilisez les boutons de la campagne ci-dessous.';

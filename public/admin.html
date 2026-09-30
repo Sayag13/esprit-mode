@@ -33,6 +33,35 @@
     <label class="check"><input type="checkbox" id="auto"> <span>Créer le bon automatiquement quand la carte est pleine</span></label>
     <button class="small" id="ruleBtn">Enregistrer la règle</button><div id="ruleMsg"></div></form>
 
+  <form class="card" id="opts" novalidate><h2>Options (à activer quand vous le décidez)</h2>
+    <p class="small muted">Tout est désactivé au départ. Cochez, réglez, puis « Enregistrer les options ». Les e-mails automatiques nécessitent Brevo (déjà relié) : <span id="oBrevo"></span></p>
+    <h3>E-mails automatiques aux clientes</h3>
+    <label class="check"><input type="checkbox" id="o_email_voucher"> <span>« Carte pleine ! » : e-mail dès qu'un bon d'achat est créé</span></label>
+    <label class="check"><input type="checkbox" id="o_email_expiry_reminder"> <span>Rappel avant l'expiration d'un bon non utilisé, </span><input id="o_reminder_days" type="number" min="1" max="180" style="width:80px"> <span>jours avant</span></label>
+    <h3>Anniversaires</h3>
+    <label class="field">Bonus proposé par défaut (points, modifiable au cas par cas par Michelle)<input id="o_birthday_suggested_points" type="number" min="0" max="1000" style="max-width:140px"></label>
+    <label class="check"><input type="checkbox" id="o_birthday_sellers_can_offer"> <span>Les vendeuses peuvent aussi offrir le bonus en caisse</span></label>
+    <label class="check"><input type="checkbox" id="o_birthday_auto_points"> <span>Ajouter automatiquement le bonus le jour de l'anniversaire (sans intervention)</span></label>
+    <label class="check"><input type="checkbox" id="o_birthday_auto_email"> <span>Envoyer un e-mail « Joyeux anniversaire » (seulement aux clientes qui acceptent les e-mails)</span></label>
+    <h3>Niveaux de fidélité</h3>
+    <label class="check"><input type="checkbox" id="o_levels_enabled"> <span>Afficher un niveau selon le total des achats</span></label>
+    <div id="o_levels"></div>
+    <h3>Bonus</h3>
+    <label class="check"><input type="checkbox" id="o_welcome_bonus_enabled"> <span>Bonus de bienvenue à l'inscription : </span><input id="o_welcome_bonus_points" type="number" min="0" max="1000" style="width:90px"> <span>points</span></label>
+    <label class="check"><input type="checkbox" id="o_special_day_enabled"> <span>Journée spéciale active : points × </span><input id="o_special_day_multiplier" type="number" min="1" max="10" step="0.5" style="width:80px"></label>
+    <label class="field">Nom de la journée spéciale<input id="o_special_day_label" style="max-width:320px"></label>
+    <h3>Sauvegarde</h3>
+    <label class="check"><input type="checkbox" id="o_weekly_backup"> <span>Recevoir chaque semaine une sauvegarde (clientes et achats) par e-mail à : </span></label>
+    <input id="o_backup_email" type="email" style="max-width:340px">
+    <div class="row" style="margin-top:10px"><button class="small auto" id="optBtn">Enregistrer les options</button><button type="button" class="small secondary auto" id="runDaily">Lancer maintenant les tâches automatiques</button></div>
+    <div id="optMsg"></div></form>
+
+  <div class="card"><h2>Affiche et import</h2>
+    <p><a href="/affiche.html" target="_blank" rel="noopener">Imprimer l'affiche A5 « Rejoignez le programme fidélité » avec le QR code</a></p>
+    <h3>Importer des clientes existantes</h3>
+    <p class="small muted">Fichier CSV (depuis Excel : Enregistrer sous → CSV). Colonnes reconnues : prénom, nom, téléphone, e-mail, date de naissance, adresse, code postal, ville, points. Les doublons de téléphone sont ignorés. Les clientes importées n'ont pas d'accord pour les offres.</p>
+    <input id="impFile" type="file" accept=".csv,text/csv"><div id="impMsg"></div></div>
+
   <div class="card"><h2>Équipe et accès</h2>
     <div id="users"></div>
     <h3>Créer un accès</h3>
@@ -56,13 +85,64 @@
 <script src="app.js"></script>
 <script>
 let timer = null;
-(async () => { if (!(await staffNav('admin'))) return; dashboard(); search(); settings(); users(); auditLog(); })();
+(async () => { if (!(await staffNav('admin'))) return; dashboard(); search(); settings(); users(); auditLog(); loadOptions(); })();
+const OKEYS = ['email_voucher', 'email_expiry_reminder', 'birthday_sellers_can_offer', 'birthday_auto_points', 'birthday_auto_email', 'levels_enabled', 'welcome_bonus_enabled', 'special_day_enabled', 'weekly_backup'];
+const OVALS = ['reminder_days', 'birthday_suggested_points', 'welcome_bonus_points', 'special_day_multiplier', 'special_day_label', 'backup_email'];
+let OPTS = null;
+function renderLevels() { $('o_levels').innerHTML = (OPTS.levels || []).map((l, i) => `<div class="row"><input data-ln="${i}" value="${esc(l.name)}" placeholder="Nom du niveau"><span class="small auto">à partir de</span><input data-lm="${i}" type="number" min="0" value="${l.min}" ${i === 0 ? 'disabled' : ''} style="max-width:120px"><span class="small auto">€ d'achats cumulés</span></div>`).join(''); }
+async function loadOptions() {
+  try { OPTS = await api('/api/options');
+    OKEYS.forEach(k => $('o_' + k).checked = !!OPTS[k]); OVALS.forEach(k => $('o_' + k).value = OPTS[k] ?? '');
+    $('oBrevo').textContent = OPTS.email_ready ? 'activé ✓' : 'NON activé (les e-mails ne partiront pas)'; renderLevels();
+  } catch (e) { $('optMsg').className = 'err'; $('optMsg').textContent = e.message; }
+}
+$('opts').addEventListener('submit', async e => {
+  e.preventDefault(); const body = {};
+  OKEYS.forEach(k => body[k] = $('o_' + k).checked); OVALS.forEach(k => body[k] = $('o_' + k).value);
+  body.levels = (OPTS.levels || []).map((l, i) => ({ name: document.querySelector(`[data-ln="${i}"]`).value, min: document.querySelector(`[data-lm="${i}"]`).value }));
+  try { OPTS = { ...(await api('/api/options', { method: 'POST', body })), email_ready: OPTS.email_ready }; $('optMsg').className = 'ok'; $('optMsg').textContent = 'Options enregistrées.'; renderLevels(); }
+  catch (err) { $('optMsg').className = 'err'; $('optMsg').textContent = err.message; }
+});
+$('runDaily').addEventListener('click', async () => { try { await api('/api/admin/run-daily', { method: 'POST' }); toast('Tâches automatiques effectuées'); auditLog(); dashboard(); } catch (e) { toast(e.message, true); } });
+function parseCSV(text) {
+  text = text.replace(/^\ufeff/, ''); const first = text.split(/\r?\n/)[0] || '';
+  const sep = (first.match(/;/g) || []).length >= (first.match(/,/g) || []).length ? ';' : ',';
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) { const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true; else if (ch === sep) { row.push(cur); cur = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; } else cur += ch; }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim()));
+}
+function csvRows(text) {
+  const rows = parseCSV(text); if (rows.length < 2) return [];
+  const pl = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+  const H = rows[0].map(pl); const col = (...n) => H.findIndex(h => n.includes(h));
+  const ix = { first_name: col('prenom', 'firstname'), last_name: col('nom', 'lastname', 'name'), phone: col('telephone', 'tel', 'portable', 'mobile', 'phone'), email: col('email', 'mail', 'courriel', 'adressemail', 'adresseemail'),
+    birth_date: col('datedenaissance', 'naissance', 'anniversaire', 'datenaissance'), address: col('adresse', 'address'), postal_code: col('codepostal', 'cp'), city: col('ville', 'city'), points: col('points', 'solde') };
+  return rows.slice(1).map(r => Object.fromEntries(Object.entries(ix).map(([k, i]) => [k, i >= 0 ? (r[i] || '').trim() : ''])));
+}
+let IMP = null;
+$('impFile').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
+  rd.onload = async () => { IMP = csvRows(String(rd.result));
+    try { const r = await api('/api/import', { method: 'POST', body: { rows: IMP, confirm: false } });
+      $('impMsg').innerHTML = `<p class="ok">${r.ok} cliente(s) prête(s) à importer.</p>${r.duplicates.length ? `<p class="warn">${r.duplicates.length} doublon(s) ignoré(s) : ${esc(r.duplicates.slice(0, 5).join(', '))}${r.duplicates.length > 5 ? '…' : ''}</p>` : ''}${r.invalid ? `<p class="err">${r.invalid} ligne(s) incomplète(s) ignorée(s).</p>` : ''}${r.ok ? '<button class="small" id="impGo">Importer</button>' : ''}`;
+    } catch (err) { $('impMsg').className = 'err'; $('impMsg').textContent = err.message; } };
+  rd.readAsText(f, 'utf-8');
+});
+$('impMsg').addEventListener('click', async e => {
+  if (!e.target.closest('#impGo')) return;
+  try { const r = await api('/api/import', { method: 'POST', body: { rows: IMP, confirm: true } }); $('impMsg').innerHTML = `<p class="ok">${r.ok} cliente(s) importée(s).</p>`; search(); dashboard(); }
+  catch (err) { toast(err.message, true); }
+});
 
 async function dashboard() {
   try {
     const d = await api('/api/dashboard');
     const k = (v, l) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`;
-    $('dash').innerHTML = k(d.customers, 'clientes') + k(d.new_month, 'nouvelles ce mois') + k(money(d.ca_today), 'CA du jour') + k(money(d.ca_month), 'CA du mois') +
+    $('dash').innerHTML = k(d.customers, 'clientes') + k(d.new_month, 'nouvelles ce mois') + k(money(d.ca_today), 'CA du jour') + k(money(d.ca_week), 'CA de la semaine') + k(money(d.ca_month), 'CA du mois') + k(d.birthdays_week || 0, 'anniversaires cette semaine') +
       k(d.sales_month ? money(d.ca_month / d.sales_month) : '—', 'panier moyen du mois') + k(d.active_90, 'actives (90 jours)');
     if (d.by_store && d.by_store.length) $('dash').innerHTML += d.by_store.map(r => k(money(r.ca_month), 'CA du mois — ' + esc(r.store) + ' (' + r.sales_month + ' achats)')).join('');
     $('fid').innerHTML = `<h2>Fidélité</h2><div class="grid">${k(d.points_distributed, 'points distribués')}${k(d.vouchers_created, 'bons créés')}${k(d.vouchers_used, 'bons utilisés')}${k(d.vouchers_active, 'bons en cours')}${k(d.vouchers_expired, 'bons expirés')}${k(d.near_reward, 'proches de la carte pleine')}</div>`;

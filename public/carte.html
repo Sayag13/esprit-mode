@@ -34,13 +34,17 @@ async function load() {
 function render() {
   const c = D.customer, R = D.rule, left = Math.max(0, R.threshold - c.points), pct = Math.min(100, Math.round(c.points / R.threshold * 100));
   const active = D.vouchers.filter(v => v.status === 'active');
+  let prevPts = null; try { const v = localStorage.getItem('pts_' + token); if (v !== null) prevPts = Number(v); localStorage.setItem('pts_' + token, String(c.points)); } catch (e) {}
+  const newStamps = prevPts != null && prevPts < c.points ? Math.min(300, c.points) - Math.min(300, prevPts) : 0;
   $('app').innerHTML = `
   ${params.get('bienvenue') && !isStandalone() ? `<div class="card" style="border-color:#cfe1cf"><p class="ok" style="margin:0 0 8px"><b>Bienvenue chez esprit mode !</b> Votre carte est créée.</p>${installBox('Dernière étape : installez votre carte')}</div>` : ''}
-  <div class="loyalty"><div class="b">esprit mode</div><h1>${esc(c.first_name)} ${esc(c.last_name)}</h1>
+  ${D.special_day ? `<p class="ok" style="margin:10px 0">${esc(D.special_day.label)} : vos points sont multipliés par ${D.special_day.multiplier} aujourd'hui !</p>` : ''}
+  <div class="loyalty"><div class="b">esprit mode${D.level ? ` · <span style="letter-spacing:.08em">${esc(D.level.name)}</span>` : ''}</div><h1>${esc(c.first_name)} ${esc(c.last_name)}</h1>
     <div class="pts">${c.points}</div><div>points</div>
     <div class="bar"><span style="width:${pct}%"></span></div>
-    <div class="next">${left > 0 ? `Encore <b>${left} points</b> pour votre bon d'achat de ${euros0(R.voucher_value)}.` : `Carte pleine : votre bon d'achat de ${euros0(R.voucher_value)} est prêt.`}</div></div>
-  ${R.threshold === 300 ? `<div class="card"><h2>Ma carte à tampons</h2>${stampGrid(c.points, 300)}<p class="small muted">Comme la carte papier : 300 € d'achats = un bon d'achat de ${euros0(R.voucher_value)}, valable ${R.validity_days >= 365 ? 'un an' : R.validity_days + ' jours'}.</p></div>` : ''}
+    <div class="next">${left > 0 ? `Encore <b>${left} points</b> pour votre bon d'achat de ${euros0(R.voucher_value)}.` : `Carte pleine : votre bon d'achat de ${euros0(R.voucher_value)} est prêt.`}</div>
+    ${D.level && D.level.next ? `<div class="next" style="margin-top:8px;font-size:13px">Niveau ${esc(D.level.next.name)} : encore ${D.level.next.remaining} € d'achats.</div>` : ''}</div>
+  ${R.threshold === 300 ? `<div class="card"><h2>Ma carte à tampons</h2>${stampGrid(c.points, 300, prevPts)}${newStamps > 0 ? `<p class="ok" style="margin:4px 0">+${newStamps} points depuis votre dernière visite</p>` : ''}<p class="small muted">Comme la carte papier : 300 € d'achats = un bon d'achat de ${euros0(R.voucher_value)}, valable ${R.validity_days >= 365 ? 'un an' : R.validity_days + ' jours'}.</p></div>` : ''}
   <div class="card"><h2>Mes récompenses</h2>
     ${active.map(v => `<div class="item"><div><div class="name">Bon d'achat de ${euros0(v.value)}</div><div class="small muted">Valable jusqu'au ${fdate(v.expires_at)}</div></div><span class="tag ok">À utiliser en boutique</span></div>`).join('')}
     ${!active.length ? `<p class="muted">Votre prochain bon : ${euros0(R.voucher_value)} à ${R.threshold} points (encore ${left}).</p>` : ''}
@@ -66,7 +70,7 @@ function render() {
   <div class="card"><h2>Suivez esprit mode</h2><p class="muted">Les nouveautés et les vidéos de Michelle.</p><div class="soc">
     <div style="text-align:center"><img class="qr" style="width:120px;height:120px" src="/api/public/social-qr/instagram" alt="QR code Instagram"><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener">Instagram</a></div>
     <div style="text-align:center"><img class="qr" style="width:120px;height:120px" src="/api/public/social-qr/facebook" alt="QR code Facebook"><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener">Facebook</a></div></div></div>
-  <div class="card"><h2>Nos boutiques</h2><p><b>59 avenue du Général de Gaulle</b>, 94700 Maisons-Alfort</p><p><b>47 avenue Georges Clemenceau</b>, 94700 Maisons-Alfort</p><p>☎ Michelle : 06 62 55 24 87</p></div>`;
+  ${aboutHtml()}`;
   $('edit').addEventListener('submit', save);
   const del = $('delAsk'); if (del) del.addEventListener('click', askDelete);
   $('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));

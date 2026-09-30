@@ -15,3 +15,6 @@ Aucun mot de passe n'est écrit dans le code.
 Voir AUDIT-v0.8.md (état des lieux) et GUIDE-MISE-EN-LIGNE.md (passage en v0.9).
 
 v1.0 : offres et vidéos de Michelle affichées sur la carte cliente ; envoi gratuit des e-mails via Brevo (300/jour, variables BREVO_API_KEY et BREVO_SENDER_EMAIL) ; SMS et WhatsApp envoyés une par une depuis le téléphone de Michelle (gratuit) ; boutique notée sur chaque achat ; suppression des campagnes.
+
+## v1.1
+Options activables (Administration → Options), toutes désactivées par défaut : bonus anniversaire (points choisis par Michelle), e-mails carte pleine / rappel, niveaux, bonus de bienvenue, journée spéciale, sauvegarde hebdo. Scan QR en caisse, ciblage des campagnes, affiche A5 (/affiche.html), import CSV.

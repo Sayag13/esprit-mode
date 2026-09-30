@@ -49,12 +49,29 @@ async function staffNav(current) {
 }
 
 /* Grille à tampons identique à la carte papier (5 colonnes de 25, 20, 10, 5 = 300) */
-function stampGrid(points, threshold) {
+function aboutHtml() {
+  return `<div class="card about"><h2>Qui sommes-nous ?</h2>
+  <p><b>esprit mode</b> est une enseigne indépendante de prêt-à-porter et d’accessoires implantée à Maisons-Alfort depuis 2008.</p>
+  <p>Depuis plus de 15 ans, nous accompagnons nos clientes dans leurs choix de mode, avec une attention particulière portée à l’accueil, au conseil et à la proximité.</p>
+  <p>Aujourd’hui, esprit mode compte deux points de vente à Maisons-Alfort, permettant à nos clientes de retrouver notre univers et notre équipe dans deux adresses :</p>
+  <p>📍 <b>59 avenue du Général de Gaulle</b><br>94700 Maisons-Alfort</p>
+  <p>📍 <b>47 avenue Georges Clemenceau</b><br>94700 Maisons-Alfort</p>
+  <p>📞 <a href="tel:+33662552487">Michelle : 06 62 55 24 87</a><br>✉️ <a href="mailto:espritmode13@gmail.com">espritmode13@gmail.com</a></p>
+  <p>Notre objectif est de proposer une expérience de shopping fondée sur le conseil personnalisé, la confiance et la fidélité de nos clientes.</p>
+  <p>L’application <b>esprit mode — Fidélité</b> a été créée pour prolonger cette relation avec nos clientes et leur permettre de retrouver simplement leur carte de fidélité, leurs points, leurs avantages et leur historique d’achats.</p>
+  <p class="about-end">Merci de votre fidélité depuis toutes ces années. 🤍</p></div>`;
+}
+function stampGrid(points, threshold, prev) {
   if (Number(threshold) !== 300) return '';
-  const rows = [25, 20, 10, 5], pts = Math.min(Math.max(points, 0), 300), on = {}; let cum = 0;
-  for (let c = 0; c < 5; c++) for (let r = 0; r < 4; r++) { cum += rows[r]; on[r + '-' + c] = cum <= pts; }
-  let cells = '';
-  for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) cells += `<div class="stamp${on[r + '-' + c] ? ' on' : ''}">${rows[r]}</div>`;
+  const rows = [25, 20, 10, 5], pts = Math.min(Math.max(points, 0), 300), on = {}, was = {}; let cum = 0;
+  const before = prev == null || prev > points ? pts : Math.min(Math.max(prev, 0), 300);
+  for (let c = 0; c < 5; c++) for (let r = 0; r < 4; r++) { cum += rows[r]; on[r + '-' + c] = cum <= pts; was[r + '-' + c] = cum <= before; }
+  let cells = '', k = 0;
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) {
+    const id = r + '-' + c, isNew = on[id] && !was[id];
+    const rot = -30 + ((r * 7 + c * 13) % 17);
+    cells += `<div class="stamp${on[id] ? ' on' : ''}${isNew ? ' new' : ''}" style="--rot:${rot}deg${isNew ? ';--d:' + (0.4 + 0.35 * k++) + 's' : ''}">${rows[r]}</div>`;
+  }
   return `<div class="stamps" role="img" aria-label="${pts} euros tamponnés sur 300">${cells}</div>`;
 }
 
