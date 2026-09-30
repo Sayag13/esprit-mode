@@ -16,7 +16,7 @@ Cette étape est facultative : sans elle, tout le reste fonctionne.
 Elle est guidée pas à pas dans la conversation.
 
 ## Au quotidien
-- **Caisse :** choisissez une fois la boutique (Clemenceau ou Général de Gaulle) en haut à droite. Elle est retenue sur l'appareil et notée sur chaque achat.
+- **Caisse :** choisissez une fois la boutique (Général de Gaulle ou Clemenceau) en haut à droite. Elle est retenue sur l'appareil et notée sur chaque achat.
 - **Michelle, dans Clientes & communication :**
   - créer une campagne en cochant les canaux, puis utiliser les boutons de la campagne : « Envoyer l'e-mail », « SMS une par une », « WhatsApp une par une », « Afficher sur la carte des clientes », « Supprimer » ;
   - les SMS et WhatsApp se font **depuis son téléphone** : « Ouvrir » prépare le message, il reste à appuyer sur Envoyer ;

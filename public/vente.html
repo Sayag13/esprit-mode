@@ -12,7 +12,7 @@
 <main class="narrow">
   <div class="card" id="searchCard">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Rechercher une cliente</h2>
-      <select id="store" class="auto" style="width:auto" aria-label="Boutique"><option value="">Boutique…</option><option>Clemenceau</option><option>Général de Gaulle</option></select></div>
+      <select id="store" class="auto" style="width:auto" aria-label="Boutique"><option value="">Boutique…</option><option>Général de Gaulle</option><option>Clemenceau</option></select></div>
     <input id="q" type="search" placeholder="Téléphone, nom ou e-mail" autocomplete="off" autofocus>
     <div id="hint" class="small muted">Tapez les premiers chiffres du téléphone ou le nom.</div>
     <div id="results"></div>
@@ -77,7 +77,7 @@ function showClient() {
     <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(c.first_name)} ${esc(c.last_name)}</h2><div class="muted small">${esc(fmtPhone(c.phone))} · ${c.points} points · encore ${CUR.stats.remaining} pour le bon</div></div>
       <button type="button" class="small secondary auto" id="closeClient">Changer</button></div>
     ${c.deletion_requested_at ? '<p class="warn">Cette cliente a demandé la suppression de son compte.</p>' : ''}
-    ${$('store').value ? '' : '<p class="warn small">Choisissez la boutique en haut (Clemenceau ou Général de Gaulle) : elle est notée sur chaque achat et retenue sur cet appareil.</p>'}
+    ${$('store').value ? '' : '<p class="warn small">Choisissez la boutique en haut (Général de Gaulle ou Clemenceau) : elle est notée sur chaque achat et retenue sur cet appareil.</p>'}
     <form id="buy" novalidate>
       <label class="field">Montant payé (€)<input id="amount" class="big-amount" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
       ${act.length ? '<p class="field">Bons d\'achat disponibles</p>' + act.map(v => `<label class="check"><input type="checkbox" data-v="${v.id}"> <span>Utiliser le bon de ${euros0(v.value)} (jusqu'au ${fdate(v.expires_at)})</span></label>`).join('') : ''}
