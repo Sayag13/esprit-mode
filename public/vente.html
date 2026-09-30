@@ -26,7 +26,7 @@
     <div class="row"><input id="nf" placeholder="Prénom *"><input id="nl" placeholder="Nom *"></div>
     <input id="np" type="tel" inputmode="tel" placeholder="Téléphone *"><input id="ne" type="email" placeholder="E-mail *">
     <div id="dupWarn"></div>
-    <label class="check"><input id="nt" type="checkbox"> <span>La cliente accepte les conditions et la politique de confidentialité *</span></label>
+    <label class="check"><input id="nt" type="checkbox"> <span>La cliente accepte les conditions et la politique de confidentialité * — <a href="/conditions.html" target="_blank" rel="noopener">les lui montrer</a></span></label>
     <label class="check"><input id="nme" type="checkbox"> <span>La cliente souhaite recevoir les offres par e-mail</span></label>
     <label class="check"><input id="nms" type="checkbox"> <span>La cliente souhaite recevoir les offres par SMS</span></label>
     <p class="small muted">Ne cochez les offres que si la cliente l'a demandé.</p>
@@ -60,9 +60,9 @@ async function find() {
 }
 $('results').addEventListener('click', e => { const b = e.target.closest('[data-open]'); if (b) openClient(Number(b.dataset.open)); });
 
-async function openClient(id) {
+async function openClient(id, justCreated) {
   try { CUR = await api('/api/customers/' + id + '/profile'); } catch (e) { toast(e.message, true); return; }
-  $('newCard').classList.add('hidden'); showClient();
+  CUR.justCreated = !!justCreated; $('newCard').classList.add('hidden'); showClient();
 }
 function preview() {
   const a = Number(String($('amount')?.value || '').replace(',', '.'));
@@ -74,6 +74,7 @@ function showClient() {
   const c = CUR.customer, act = CUR.vouchers.filter(v => v.status === 'active');
   $('clientCard').classList.remove('hidden');
   $('clientCard').innerHTML = `
+    ${CUR.justCreated ? `<div class="ok" style="margin-bottom:12px"><b>Carte créée !</b> Envoyez-lui maintenant son lien : elle l'ouvrira d'un geste sur son téléphone${c.email ? ' (elle le reçoit aussi par e-mail)' : ''}.${cardLinkButtons(c, CUR.card_url)}</div>` : ''}
     <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(c.first_name)} ${esc(c.last_name)}</h2><div class="muted small">${esc(fmtPhone(c.phone))} · ${c.points} points · encore ${CUR.stats.remaining} pour le bon</div></div>
       <button type="button" class="small secondary auto" id="closeClient">Changer</button></div>
     ${c.deletion_requested_at ? '<p class="warn">Cette cliente a demandé la suppression de son compte.</p>' : ''}
@@ -133,7 +134,7 @@ $('newCard').addEventListener('submit', async e => {
     const c = await api('/api/customers', { method: 'POST', body: { first_name: $('nf').value, last_name: $('nl').value, phone: $('np').value, email: $('ne').value,
       terms_accepted: $('nt').checked, marketing_email: $('nme').checked, marketing_sms: $('nms').checked } });
     ['nf', 'nl', 'np', 'ne'].forEach(i => $(i).value = ''); ['nt', 'nme', 'nms'].forEach(i => $(i).checked = false);
-    toast('Carte créée'); await openClient(c.id);
+    toast('Carte créée'); await openClient(c.id, true);
   } catch (err) { $('msg').className = 'err'; $('msg').textContent = err.message; }
   b.disabled = false;
 });

@@ -61,12 +61,12 @@ function render() {
     <button id="saveBtn">Enregistrer mes coordonnées</button><div id="saved"></div></form>
   <div class="card"><h2>Mes données</h2>
     ${c.deletion_requested ? '<p class="warn">Votre demande de suppression a été transmise à la boutique.</p>' : `<div id="delZone"><button class="danger" id="delAsk">Demander la suppression de mon compte</button></div>`}
-    <p class="small muted"><a href="/#confidentialite">Politique de confidentialité</a></p></div>
+    <p class="small muted"><a href="/conditions.html">Conditions d'utilisation et politique de confidentialité</a></p></div>
   <div class="card"><h2>Partager esprit mode</h2><p>Faites découvrir la carte de fidélité à vos amies.</p><button id="shareBtn">Partager l'application</button><div id="shareMsg" class="small muted"></div></div>
   <div class="card"><h2>Suivez esprit mode</h2><p class="muted">Les nouveautés et les vidéos de Michelle.</p><div class="soc">
     <div style="text-align:center"><img class="qr" style="width:120px;height:120px" src="/api/public/social-qr/instagram" alt="QR code Instagram"><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener">Instagram</a></div>
     <div style="text-align:center"><img class="qr" style="width:120px;height:120px" src="/api/public/social-qr/facebook" alt="QR code Facebook"><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener">Facebook</a></div></div></div>
-  <div class="card"><h2>Nos boutiques</h2><p><b>59 avenue du Général de Gaulle</b>, 94700 Maisons-Alfort</p><p><b>47 avenue Georges Clemenceau</b>, 94700 Maisons-Alfort</p><p>☎ 06 62 55 24 87</p></div>`;
+  <div class="card"><h2>Nos boutiques</h2><p><b>59 avenue du Général de Gaulle</b>, 94700 Maisons-Alfort</p><p><b>47 avenue Georges Clemenceau</b>, 94700 Maisons-Alfort</p><p>☎ Michelle : 06 62 55 24 87</p></div>`;
   $('edit').addEventListener('submit', save);
   const del = $('delAsk'); if (del) del.addEventListener('click', askDelete);
   $('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));

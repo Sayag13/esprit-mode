@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css"><title>Conditions d'utilisation — esprit mode</title>
+<style>.legal h2{margin-top:6px}.legal h3{font-size:16px;margin:18px 0 6px}.legal p,.legal li{font-size:15px}.legal ul{padding-left:20px}.back{display:block;text-align:center;background:var(--ink);color:#fff;border-radius:12px;padding:13px;text-decoration:none;font-weight:600;margin-top:14px}</style></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>conditions d'utilisation</small></span></header>
+<main class="narrow">
+  <div class="card legal">
+    <h2>Programme de fidélité esprit mode</h2>
+    <p class="small muted">Conditions d'utilisation et politique de confidentialité — version du 30 septembre 2026.</p>
+
+    <h3>1. Qui organise le programme ?</h3>
+    <p>La SARL EMS 26, qui exploite les boutiques <b>esprit mode</b> : 59 avenue du Général de Gaulle et 47 avenue Georges Clemenceau, 94700 Maisons-Alfort. Contact : espritmode13@gmail.com — Michelle : 06 62 55 24 87.</p>
+
+    <h3>2. Adhésion</h3>
+    <p>L'inscription est <b>gratuite</b> et sans obligation d'achat. Elle est réservée aux personnes physiques. Une seule carte par personne et par numéro de téléphone. La carte est personnelle : elle ne peut être ni cédée ni vendue.</p>
+
+    <h3>3. Comment gagner des points ?</h3>
+    <ul>
+      <li><b id="r-ppe">1 € dépensé = 1 point</b>, calculé sur le montant réellement payé en boutique, arrondi à l'euro inférieur.</li>
+      <li>Les achats sont enregistrés en caisse sur présentation de votre carte ou de votre numéro de téléphone. Un achat non enregistré au moment du passage en caisse ne peut pas être ajouté plus tard, sauf accord de la boutique.</li>
+      <li>En cas de retour ou de remboursement d'un article, les points correspondants sont retirés.</li>
+    </ul>
+
+    <h3>4. Votre bon d'achat</h3>
+    <ul>
+      <li>À <b id="r-th">300 points</b>, votre carte est pleine : un <b id="r-val">bon d'achat de 30 €</b> est créé automatiquement et les points correspondants sont déduits.</li>
+      <li>Le bon est valable <b id="r-days">un an</b> à compter de sa création, dans les deux boutiques esprit mode.</li>
+      <li>Il s'utilise en une seule fois, ne donne pas lieu à un rendu de monnaie, et ne peut être ni échangé contre des espèces ni remboursé.</li>
+      <li>Un bon non utilisé à sa date d'expiration est perdu.</li>
+    </ul>
+
+    <h3>5. Évolution du programme</h3>
+    <p>esprit mode peut faire évoluer ou arrêter le programme en informant les adhérentes au moins un mois à l'avance (sur la carte, par e-mail ou en boutique). Les bons déjà créés restent valables jusqu'à leur date d'expiration.</p>
+
+    <h3>6. Vos données personnelles</h3>
+    <ul>
+      <li><b>Données collectées :</b> prénom, nom, téléphone, e-mail et, si vous les donnez, date de naissance et adresse ; vos achats enregistrés (date, montant, points, boutique).</li>
+      <li><b>Utilisation :</b> gérer votre carte, vos points et vos bons d'achat. Vous envoyer des offres <b>uniquement si vous l'avez accepté</b>, par le canal choisi (e-mail, SMS, WhatsApp).</li>
+      <li><b>Destinataires :</b> uniquement l'équipe esprit mode et ses prestataires techniques (hébergement, envoi des e-mails), qui agissent pour son compte. Vos données ne sont jamais vendues ni cédées.</li>
+      <li><b>Durée :</b> tant que votre carte est active, puis 3 ans après votre dernier achat ou contact.</li>
+      <li><b>Vos droits :</b> accès, rectification, suppression, opposition, retrait de votre accord pour les offres à tout moment. Depuis votre carte (« Mes coordonnées », « Demander la suppression de mon compte »), par le lien de désinscription des e-mails, en boutique, ou par e-mail à espritmode13@gmail.com.</li>
+      <li>Vous pouvez aussi adresser une réclamation à la CNIL (cnil.fr).</li>
+    </ul>
+
+    <h3>7. Droit applicable</h3>
+    <p>Les présentes conditions sont soumises au droit français.</p>
+
+    <a class="back" href="/" id="back">Retour</a>
+  </div>
+</main>
+<script src="app.js"></script>
+<script>
+$('back').addEventListener('click', e => { if (history.length > 1 && document.referrer) { e.preventDefault(); history.back(); } });
+fetch('/api/public/config').then(r => r.json()).then(c => { const r = c.rule; if (!r) return;
+  $('r-ppe').textContent = `1 € dépensé = ${r.points_per_euro} point${r.points_per_euro > 1 ? 's' : ''}`;
+  $('r-th').textContent = `${r.threshold} points`; $('r-val').textContent = `bon d'achat de ${euros0(r.voucher_value)}`;
+  $('r-days').textContent = r.validity_days >= 365 && r.validity_days % 365 === 0 ? (r.validity_days === 365 ? 'un an' : r.validity_days / 365 + ' ans') : r.validity_days + ' jours';
+}).catch(() => {});
+</script>
+</body></html>

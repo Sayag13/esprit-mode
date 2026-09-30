@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.0.3';
+const VERSION = '1.0.6';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -257,7 +257,7 @@ function read(fn) {
 app.get('/health', (q, s) => s.json({ ok: true, service: 'esprit-mode', version: VERSION, storage: pool ? 'postgres' : 'file' }));
 
 app.get('/api/public/config', (req, res) => res.json({
-  brand: 'esprit mode', app_url: baseUrl(req), phone: '06 62 55 24 87',
+  brand: 'esprit mode', app_url: baseUrl(req), phone: 'Michelle : 06 62 55 24 87',
   stores: [{ name: 'Boutique 1', address: '59 avenue du Général de Gaulle', postal_code: '94700', city: 'Maisons-Alfort' },
     { name: 'Boutique 2', address: '47 avenue Georges Clemenceau', postal_code: '94700', city: 'Maisons-Alfort' }],
   rule: { points_per_euro: S().points_per_euro, threshold: S().threshold, voucher_value: S().voucher_value_cents / 100, validity_days: S().voucher_validity_days }
@@ -650,8 +650,8 @@ function emailHtml(c, cust, req) {
   return `<div style="background:#f7f3ee;padding:24px 12px;font-family:Arial,sans-serif;color:#222"><div style="max-width:560px;margin:auto;background:#fff;border-radius:16px;overflow:hidden">
     <div style="background:#465157;color:#fff;padding:22px;font-size:26px;letter-spacing:2px">esprit mode</div>
     <div style="padding:22px;font-size:16px;line-height:1.5"><h2 style="font-family:Georgia,serif;font-weight:normal;margin-top:0">${e(c.title)}</h2><p>${msg}</p>${media}
-    <p><a href="${cardUrl(cust, req)}" style="display:inline-block;background:#465157;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">Voir ma carte de fidélité</a></p></div>
-    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 59 av. du Général de Gaulle et 47 av. Georges Clemenceau, 94700 Maisons-Alfort — 06 62 55 24 87<br>
+    <p><a href="${cardUrl(cust, req)}" style="display:inline-block;background:#465157;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">Voir ma carte de fidélité</a></p><p style="font-size:13px;color:#697177">Si le bouton ne répond pas, appuyez longuement sur ce lien puis choisissez « Ouvrir » ou « Ouvrir dans Safari » :<br><a href="${cardUrl(cust, req)}" style="color:#465157;word-break:break-all">${cardUrl(cust, req)}</a></p></div>
+    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 59 av. du Général de Gaulle et 47 av. Georges Clemenceau, 94700 Maisons-Alfort — Michelle : 06 62 55 24 87 — <a href="${baseUrl(req)}/conditions.html" style="color:#697177">Conditions d'utilisation</a><br>
     Vous recevez cet e-mail car vous avez accepté les offres d'esprit mode. <a href="${baseUrl(req)}/desinscription?token=${cust.public_token}" style="color:#697177">Se désinscrire</a></div></div></div>`;
 }
 async function brevoSend(to, subject, html) {
@@ -667,8 +667,9 @@ function welcomeHtml(c, req) {
     <div style="background:#465157;color:#fff;padding:22px;font-size:26px;letter-spacing:2px">esprit mode</div>
     <div style="padding:22px;font-size:16px;line-height:1.5"><p>Bonjour ${e(c.first_name)},</p><p>Bienvenue chez esprit mode ! Votre carte de fidélité est créée : 1 € dépensé = 1 point, et à ${S().threshold} points un bon d'achat de ${S().voucher_value_cents / 100} € vous est offert.</p>
     <p><a href="${cardUrl(c, req)}" style="display:inline-block;background:#465157;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">Ouvrir ma carte de fidélité</a></p>
+    <p style="font-size:13px;color:#697177">Si le bouton ne répond pas, appuyez longuement sur ce lien puis choisissez « Ouvrir » ou « Ouvrir dans Safari » :<br><a href="${cardUrl(c, req)}" style="color:#465157;word-break:break-all">${cardUrl(c, req)}</a></p>
     <p style="font-size:14px;color:#697177">Sur iPhone, ouvrez ce lien dans Safari puis Partager → « Sur l'écran d'accueil ». Sur Android, Chrome propose « Installer l'application ».</p></div>
-    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 59 av. du Général de Gaulle et 47 av. Georges Clemenceau, 94700 Maisons-Alfort — 06 62 55 24 87</div></div></div>`;
+    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 59 av. du Général de Gaulle et 47 av. Georges Clemenceau, 94700 Maisons-Alfort — Michelle : 06 62 55 24 87 — <a href="${baseUrl(req)}/conditions.html" style="color:#697177">Conditions d'utilisation</a></div></div></div>`;
 }
 // E-mail de bienvenue (message de service, pas de la publicité) : envoyé en arrière-plan si Brevo est activé
 function sendWelcome(c, req) {
