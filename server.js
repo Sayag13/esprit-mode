@@ -1,142 +1,616 @@
-const express=require('express');
-const path=require('path');
-const crypto=require('crypto');
-const QRCode=require('qrcode');
-const fs=require('fs');
-const {Pool}=require('pg');
+'use strict';
+/*
+ * esprit mode — carte de fidélité — v0.9.0
+ * Règle : 1 € = 1 point ; carte pleine à 300 points = bon d'achat de 30 € valable 1 an (paramétrable).
+ *
+ * Variables d'environnement :
+ *   DATABASE_URL    — base PostgreSQL (la même que la v0.8.3 : les données sont reprises telles quelles)
+ *   ADMIN_PASSWORD  — mot de passe du compte « admin » (10 caractères min.). Obligatoire tant que le compte admin a encore son ancien code.
+ *   ADMIN_USERNAME  (facultatif, défaut « admin »)
+ *   MIGRATE_FROM_DATABASE_URL (facultatif) — ancienne base à recopier une seule fois si DATABASE_URL est une base neuve et vide
+ *   PUBLIC_URL      (recommandé) — ex. https://esprit-mode.onrender.com
+ *   TZ              (recommandé) — Europe/Paris
+ */
+const express = require('express');
+const path = require('path');
+const crypto = require('crypto');
+const fs = require('fs');
+const QRCode = require('qrcode');
+const { Pool } = require('pg');
 
-const app=express();
-const PORT=Number(process.env.PORT||3000),HOST='0.0.0.0';
-const DATA_DIR=process.env.DATA_DIR||(fs.existsSync('/var/data')?'/var/data':__dirname);
-try{fs.mkdirSync(DATA_DIR,{recursive:true})}catch(e){console.error('DATA_DIR:',e.message)}
-const DB_FILE=process.env.DB_FILE||path.join(DATA_DIR,'esprit-mode-data.json');
-const DATABASE_URL=String(process.env.DATABASE_URL||'').trim();
-const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false},max:3,idleTimeoutMillis:30000,connectionTimeoutMillis:10000}):null;
+const VERSION = '0.9.0';
+const app = express();
+app.set('trust proxy', 1);
+const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
+const DATA_DIR = process.env.DATA_DIR || (fs.existsSync('/var/data') ? '/var/data' : __dirname);
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch (e) { console.error('DATA_DIR:', e.message); }
+const DB_FILE = process.env.DB_FILE || path.join(DATA_DIR, 'esprit-mode-data.json');
+const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3, idleTimeoutMillis: 30000, connectionTimeoutMillis: 15000 }) : null;
 
-let db={customers:[],purchases:[],users:[],rewards:[],redemptions:[],loyalty_adjustments:[],campaigns:[],settings:{points_per_euro:1},seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
+const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || 'admin').trim().toLowerCase();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '');
+const DAY = 86400000;
+const SESSION_DAYS = 30;
 
-function normalizeDb(x){
-  const base={customers:[],purchases:[],users:[],rewards:[],redemptions:[],loyalty_adjustments:[],campaigns:[],settings:{points_per_euro:1},seq:{customers:1,purchases:1,users:1,rewards:1,redemptions:1,campaigns:1}};
-  const d={...base,...(x||{})};
-  d.customers=Array.isArray(d.customers)?d.customers:[];
-  d.purchases=Array.isArray(d.purchases)?d.purchases:[];
-  d.users=Array.isArray(d.users)?d.users:[];
-  d.rewards=Array.isArray(d.rewards)?d.rewards:[];
-  d.redemptions=Array.isArray(d.redemptions)?d.redemptions:[];
-  d.loyalty_adjustments=Array.isArray(d.loyalty_adjustments)?d.loyalty_adjustments:[];
-  d.campaigns=Array.isArray(d.campaigns)?d.campaigns:[];
-  d.settings={points_per_euro:1,...(d.settings||{})};
-  d.seq={...base.seq,...(d.seq||{})};
+/* ======================= Données ======================= */
+
+const DEFAULT_SETTINGS = { points_per_euro: 1, threshold: 300, voucher_value_cents: 3000, voucher_validity_days: 365, auto_voucher: true, voucher_conditions: "Bon d'achat valable dans les deux boutiques esprit mode, en une seule fois." };
+const SEQ_KEYS = ['customers', 'purchases', 'users', 'rewards', 'redemptions', 'campaigns', 'loyalty_adjustments', 'vouchers', 'audit'];
+
+function emptyDb() {
+  return { customers: [], purchases: [], users: [], rewards: [], redemptions: [], loyalty_adjustments: [], campaigns: [], vouchers: [], sessions: [], audit: [],
+    settings: { ...DEFAULT_SETTINGS }, seq: Object.fromEntries(SEQ_KEYS.map(k => [k, 1])), migrations: {} };
+}
+function normalizeDb(x) {
+  const base = emptyDb();
+  const d = { ...base, ...(x || {}) };
+  for (const k of Object.keys(base)) if (Array.isArray(base[k]) && !Array.isArray(d[k])) d[k] = [];
+  d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+  d.seq = { ...base.seq, ...(d.seq || {}) };
+  d.migrations = d.migrations || {};
+  for (const k of SEQ_KEYS) {
+    const max = (d[k] || []).reduce((n, r) => Math.max(n, Number(r.id) || 0), 0);
+    if (!(Number(d.seq[k]) > max)) d.seq[k] = max + 1;
+  }
   return d;
 }
+let db = emptyDb();
 
-async function loadDb(){
-  if(pool){
-    await pool.query(`CREATE TABLE IF NOT EXISTS app_state (id integer PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`);
-    const r=await pool.query('SELECT data FROM app_state WHERE id=1');
-    if(r.rows[0]?.data){db=normalizeDb(r.rows[0].data);return;}
-    db=normalizeDb(db);
-    await pool.query('INSERT INTO app_state(id,data) VALUES(1,$1::jsonb) ON CONFLICT(id) DO NOTHING',[JSON.stringify(db)]);
-    return;
-  }
-  try{if(fs.existsSync(DB_FILE))db=normalizeDb(JSON.parse(fs.readFileSync(DB_FILE,'utf8')))}catch(e){console.error('DB read:',e.message)}
-}
-
-function save(){
-  if(pool){
-    pool.query('INSERT INTO app_state(id,data,updated_at) VALUES(1,$1::jsonb,now()) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data,updated_at=now()',[JSON.stringify(db)]).catch(e=>console.error('Postgres write:',e.message));
-    return;
-  }
-  try{fs.writeFileSync(DB_FILE,JSON.stringify(db,null,2))}catch(e){console.error('DB write:',e.message)}
-}
-
-function id(t){return db.seq[t]++}
-function hash(p){return crypto.createHash('sha256').update(String(p)).digest('hex')}
-function token(){return crypto.randomBytes(18).toString('hex')}
-
-async function bootstrap(){
-  await loadDb();
-  let changed=false;
-
-  // Comptes professionnels initiaux demandés pour la boutique.
-  // Les mots de passe sont stockés uniquement sous forme de hash SHA-256.
-  const staff=[
-    {username:'admin',password:'1326',role:'admin',display_name:'Élie'},
-    {username:'mimi',password:'0912',role:'manager',display_name:'Michelle'},
-    {username:'elodiev',password:'9459',role:'seller',display_name:'Vendeuse 1'},
-    {username:'elodier',password:'9447',role:'seller',display_name:'Vendeuse 2'}
-  ];
-  for(const wanted of staff){
-    const existing=db.users.find(x=>x.username===wanted.username);
-    if(existing){
-      if(existing.password_hash!==hash(wanted.password)||existing.role!==wanted.role||existing.display_name!==wanted.display_name){
-        existing.password_hash=hash(wanted.password);
-        existing.role=wanted.role;
-        existing.display_name=wanted.display_name;
-        changed=true;
-      }
-    }else{
-      db.users.push({id:id('users'),username:wanted.username,password_hash:hash(wanted.password),role:wanted.role,display_name:wanted.display_name});
-      changed=true;
+async function loadDb() {
+  if (pool) {
+    await pool.query('CREATE TABLE IF NOT EXISTS app_state (id integer PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())');
+    const r = await pool.query('SELECT data FROM app_state WHERE id=1');
+    if (!r.rows[0] && process.env.MIGRATE_FROM_DATABASE_URL) {
+      const old = new Pool({ connectionString: process.env.MIGRATE_FROM_DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 15000 });
+      try {
+        const o = await old.query('SELECT data FROM app_state WHERE id=1');
+        if (o.rows[0]) { db = normalizeDb(o.rows[0].data); console.log(`Reprise de l'ancienne base : ${db.customers.length} clientes, ${db.purchases.length} achats.`); return; }
+      } finally { await old.end().catch(() => {}); }
     }
+    db = normalizeDb(r.rows[0] ? r.rows[0].data : null);
+    return;
   }
-
-  if(!db.rewards.length){db.rewards.push({id:id('rewards'),name:'Bon de 10 €',points_cost:100,value_cents:1000,active:1});changed=true}
-  if(changed){
-    if(pool){
-      await pool.query('INSERT INTO app_state(id,data,updated_at) VALUES(1,$1::jsonb,now()) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data,updated_at=now()',[JSON.stringify(db)]);
-    }else save();
+  try { if (fs.existsSync(DB_FILE)) db = normalizeDb(JSON.parse(fs.readFileSync(DB_FILE, 'utf8'))); else db = normalizeDb(null); }
+  catch (e) { console.error('Lecture des données impossible :', e.message); throw e; }
+}
+async function writeNow() {
+  const json = JSON.stringify(db);
+  if (pool) {
+    await pool.query('INSERT INTO app_state(id,data,updated_at) VALUES(1,$1::jsonb,now()) ON CONFLICT(id) DO UPDATE SET data=EXCLUDED.data, updated_at=now()', [json]);
+  } else {
+    const tmp = DB_FILE + '.tmp';
+    await fs.promises.writeFile(tmp, json);
+    await fs.promises.rename(tmp, DB_FILE);
   }
 }
+// Écritures en file d'attente : jamais deux écritures en même temps, toujours dans l'ordre.
+let writeChain = Promise.resolve();
+function persist() {
+  const p = writeChain.then(writeNow);
+  writeChain = p.catch(() => {});
+  return p;
+}
 
-app.use(express.json({limit:'2mb'}));
-app.use(express.static(path.join(__dirname,'public')));
-app.get('/health',(q,s)=>s.json({ok:true,service:'esprit-mode',version:'0.8.3',storage:pool?'postgres':'file'}));
-app.get('/api/public/config',(req,res)=>res.json({
-  brand:'esprit mode',
-  app_url:(process.env.PUBLIC_URL||`${req.protocol}://${req.get('host')}`).replace(/\/$/,''),
-  phone:'06 62 55 24 87',
-  stores:[
-    {name:'Boutique 1',address:'47 avenue Georges Clemenceau',postal_code:'94700',city:'Maisons-Alfort'},
-    {name:'Boutique 2',address:'59 avenue du Général de Gaulle',postal_code:'94700',city:'Maisons-Alfort'}
-  ],
-  social:{instagram:'',facebook:''}
+/* ======================= Utilitaires ======================= */
+
+const nowIso = () => new Date().toISOString();
+const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
+const newToken = () => crypto.randomBytes(24).toString('hex');
+function nextId(t) { return db.seq[t]++; }
+class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
+const bad = (msg, status = 400) => { throw new HttpError(status, msg); };
+function hashPw(p) { const salt = crypto.randomBytes(16).toString('hex'); return `scrypt$${salt}$${crypto.scryptSync(String(p), salt, 64).toString('hex')}`; }
+const isLegacy = h => /^[a-f0-9]{64}$/.test(String(h || ''));
+function checkPw(p, stored) {
+  // Les anciens codes (v0.8.x) étaient écrits dans le code public : ils ne sont plus acceptés.
+  if (!stored || !String(stored).startsWith('scrypt$')) return false;
+  const [, salt, h] = String(stored).split('$');
+  const a = crypto.scryptSync(String(p), salt, 64), b = Buffer.from(h, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function normPhone(t) { let d = String(t || '').replace(/[^\d+]/g, ''); if (d.startsWith('+33')) d = '0' + d.slice(3); else if (d.startsWith('0033')) d = '0' + d.slice(4); return d.replace(/\D/g, ''); }
+function validPhone(d) { return d.startsWith('0') ? d.length === 10 : d.length >= 8 && d.length <= 15; }
+function validEmail(e) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); }
+const clean = (s, max = 120) => String(s == null ? '' : s).replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, max);
+function validDate(s) { return /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : ''; }
+function baseUrl(req) { return (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, ''); }
+function cardUrl(c, req) { return `${baseUrl(req)}/carte.html?token=${encodeURIComponent(c.public_token)}`; }
+function audit(user, action, detail) {
+  db.audit.push({ id: nextId('audit'), at: nowIso(), by: user ? user.username : 'public', action, detail: String(detail || '').slice(0, 300) });
+  if (db.audit.length > 3000) db.audit.splice(0, db.audit.length - 3000);
+}
+const S = () => db.settings;
+function voucherStatus(v) {
+  if (v.status === 'used' || v.status === 'cancelled') return v.status;
+  return new Date(v.expires_at).getTime() < Date.now() ? 'expired' : 'active';
+}
+function activeVouchers(cid) { return db.vouchers.filter(v => v.customer_id === cid && voucherStatus(v) === 'active'); }
+function pointsForCents(cents) { return Math.max(0, Math.floor((cents / 100) * Number(S().points_per_euro || 1))); }
+function createVoucher(c, user) {
+  const s = S();
+  const v = { id: nextId('vouchers'), customer_id: c.id, value_cents: s.voucher_value_cents, points_used: s.threshold, created_at: nowIso(),
+    expires_at: new Date(Date.now() + s.voucher_validity_days * DAY).toISOString(), status: 'active', used_at: null, used_by: null, created_by: user ? user.username : 'auto' };
+  db.vouchers.push(v); c.points -= s.threshold; return v;
+}
+function autoVouchers(c, user) {
+  const made = [];
+  if (!S().auto_voucher) return made;
+  while (c.points >= S().threshold && made.length < 20) made.push(createVoucher(c, user));
+  return made;
+}
+function publicVoucher(v) { return { id: v.id, value: v.value_cents / 100, created_at: v.created_at, expires_at: v.expires_at, status: voucherStatus(v), used_at: v.used_at }; }
+function readCustomerInput(x, { requireEmail }) {
+  const d = {
+    first_name: clean(x.first_name, 60), last_name: clean(x.last_name, 60), phone: normPhone(x.phone), email: clean(x.email, 120).toLowerCase(),
+    birth_date: validDate(x.birth_date), address: clean(x.address, 160), postal_code: clean(x.postal_code, 10), city: clean(x.city, 60),
+    marketing_email: !!x.marketing_email, marketing_sms: !!x.marketing_sms
+  };
+  if (!d.first_name || !d.last_name) bad('Le prénom et le nom sont obligatoires.');
+  if (!validPhone(d.phone)) bad('Le numéro de téléphone doit comporter 10 chiffres, par exemple 06 12 34 56 78.');
+  if (requireEmail && !d.email) bad("L'adresse e-mail est obligatoire.");
+  if (d.email && !validEmail(d.email)) bad("L'adresse e-mail semble incomplète.");
+  if (d.marketing_email && !d.email) bad('Une adresse e-mail est nécessaire pour recevoir les offres par e-mail.');
+  return d;
+}
+function phoneTaken(phone, exceptId) { return db.customers.some(c => c.phone === phone && c.id !== exceptId && !c.deleted); }
+function applyConsents(c, d) {
+  const t = nowIso();
+  if (d.marketing_email !== !!c.marketing_email) { c.marketing_email = d.marketing_email; c.marketing_email_at = t; }
+  if (d.marketing_sms !== !!c.marketing_sms) { c.marketing_sms = d.marketing_sms; c.marketing_sms_at = t; }
+}
+function customerSummary(c) {
+  const p = db.purchases.filter(x => x.customer_id === c.id && !x.cancelled);
+  return { id: c.id, first_name: c.first_name, last_name: c.last_name, phone: c.phone, email: c.email, points: c.points,
+    vouchers: activeVouchers(c.id).length, last_purchase: p.reduce((m, x) => x.created_at > m ? x.created_at : m, '') || null,
+    deletion_requested: !!c.deletion_requested_at, created_at: c.created_at };
+}
+const liveCustomers = () => db.customers.filter(c => !c.deleted);
+
+/* ======================= Limites d'essais ======================= */
+
+const hits = new Map();
+function limited(key, max, windowMs) {
+  const now = Date.now(); const h = hits.get(key);
+  if (!h || now - h.t > windowMs) { hits.set(key, { n: 1, t: now }); return false; }
+  h.n++; return h.n > max;
+}
+function isBlocked(key, max, windowMs) { const h = hits.get(key); return !!h && Date.now() - h.t <= windowMs && h.n >= max; }
+setInterval(() => { const now = Date.now(); for (const [k, h] of hits) if (now - h.t > 3600000) hits.delete(k); }, 600000).unref();
+
+/* ======================= Démarrage ======================= */
+
+async function bootstrap() {
+  await loadDb();
+  // Comptes : ceux de la v0.8.3 sont conservés tels quels (mêmes identifiants, mêmes mots de passe).
+  let admin = db.users.find(u => String(u.username).toLowerCase() === ADMIN_USERNAME);
+  if (ADMIN_PASSWORD) {
+    if (ADMIN_PASSWORD.length < 10) console.warn('ADMIN_PASSWORD ignoré : 10 caractères minimum.');
+    else if (!admin) { admin = { id: nextId('users'), username: ADMIN_USERNAME, display_name: 'Élie', role: 'admin', active: true, password_hash: hashPw(ADMIN_PASSWORD), created_at: nowIso() }; db.users.push(admin); }
+    else { admin.role = 'admin'; admin.active = true; if (!checkPw(ADMIN_PASSWORD, admin.password_hash)) { admin.password_hash = hashPw(ADMIN_PASSWORD); admin.weak = false; } }
+  }
+  if (!db.users.some(u => u.role === 'admin' && u.active !== false && String(u.password_hash || '').startsWith('scrypt$'))) {
+    console.error('ERREUR : ajoutez la variable ADMIN_PASSWORD (10 caractères minimum) dans Render > Environment, puis redéployez.');
+    process.exit(1);
+  }
+  if (!db.migrations.v09) {
+    // Comptes conservés (identifiants, rôles, historique) ; seuls les anciens codes, rendus publics, sont désactivés.
+    for (const u of db.users) { if (u.active === undefined) u.active = true; if (isLegacy(u.password_hash)) { u.password_hash = ''; u.needs_reset = true; } }
+    for (const r of db.rewards) r.active = 0; // l'ancienne récompense « 100 points = 10 € » est remplacée par la règle de la carte
+    db.settings = { ...DEFAULT_SETTINGS, points_per_euro: Number(db.settings.points_per_euro) || 1 };
+    for (const c of db.customers) { c.phone = normPhone(c.phone); c.points = Number(c.points) || 0; }
+    db.migrations.v09 = nowIso();
+  }
+  db.sessions = db.sessions.filter(s => s.expires > Date.now());
+  await persist();
+}
+
+/* ======================= Middlewares ======================= */
+
+app.use((req, res, next) => {
+  res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin' });
+  next();
+});
+app.use(express.json({ limit: '200kb' }));
+app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+
+function auth(req, res, next) {
+  const h = String(req.headers.authorization || '');
+  if (!h.startsWith('Bearer ')) return res.status(401).json({ error: 'Connexion requise' });
+  const s = db.sessions.find(x => x.hash === sha(h.slice(7)) && x.expires > Date.now());
+  const user = s && db.users.find(u => u.id === s.user_id && u.active !== false);
+  if (!user) return res.status(401).json({ error: 'Session expirée : reconnectez-vous.' });
+  req.user = { id: user.id, username: user.username, role: user.role, display_name: user.display_name || user.username };
+  req.sessionHash = s.hash;
+  next();
+}
+function allow(...roles) { return (req, res, next) => roles.includes(req.user.role) ? next() : res.status(403).json({ error: 'Accès non autorisé' }); }
+const adminOnly = allow('admin'), managerOnly = allow('admin', 'manager'), salesOnly = allow('admin', 'manager', 'seller');
+
+// Enveloppe : validation → modification → enregistrement confirmé → réponse
+function tx(fn) {
+  return async (req, res) => {
+    try {
+      const out = await fn(req, res);
+      if (res.headersSent) return;
+      await persist();
+      res.json(out === undefined ? { ok: true } : out);
+    } catch (e) {
+      if (e instanceof HttpError) return res.status(e.status).json({ error: e.message });
+      console.error('Erreur :', e);
+      if (!res.headersSent) res.status(503).json({ error: "L'enregistrement n'a pas pu être confirmé. Vérifiez l'historique avant de recommencer." });
+    }
+  };
+}
+function read(fn) {
+  return (req, res) => {
+    try { res.json(fn(req, res)); }
+    catch (e) { if (e instanceof HttpError) return res.status(e.status).json({ error: e.message }); console.error(e); res.status(500).json({ error: 'Erreur inattendue.' }); }
+  };
+}
+
+/* ======================= Public ======================= */
+
+app.get('/health', (q, s) => s.json({ ok: true, service: 'esprit-mode', version: VERSION, storage: pool ? 'postgres' : 'file' }));
+
+app.get('/api/public/config', (req, res) => res.json({
+  brand: 'esprit mode', app_url: baseUrl(req), phone: '06 62 55 24 87',
+  stores: [{ name: 'Boutique 1', address: '47 avenue Georges Clemenceau', postal_code: '94700', city: 'Maisons-Alfort' },
+    { name: 'Boutique 2', address: '59 avenue du Général de Gaulle', postal_code: '94700', city: 'Maisons-Alfort' }],
+  rule: { points_per_euro: S().points_per_euro, threshold: S().threshold, voucher_value: S().voucher_value_cents / 100, validity_days: S().voucher_validity_days }
 }));
-app.get('/api/public/social-qr/:network',async(req,res)=>{try{const links={instagram:'https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/',facebook:'https://www.facebook.com/share/v/1Dn4Wx3Ww8/'};const url=links[req.params.network];if(!url)return res.status(404).end();const png=await QRCode.toBuffer(url,{width:360,margin:2});res.type('png').send(png)}catch(e){res.status(500).end()}});
+const SOCIAL = { instagram: 'https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/', facebook: 'https://www.facebook.com/share/v/1Dn4Wx3Ww8/' };
+app.get('/api/public/social-qr/:network', async (req, res) => {
+  const url = SOCIAL[req.params.network]; if (!url) return res.status(404).end();
+  try { res.type('png').send(await QRCode.toBuffer(url, { width: 360, margin: 2 })); } catch (e) { res.status(500).end(); }
+});
+app.get('/api/public/app-qr', async (req, res) => {
+  try { res.type('png').send(await QRCode.toBuffer(baseUrl(req) + '/', { width: 520, margin: 2 })); } catch (e) { res.status(500).end(); }
+});
+app.get('/api/public/qr/:token', async (req, res) => {
+  const c = db.customers.find(x => x.public_token === req.params.token && !x.deleted); if (!c) return res.status(404).end();
+  try { res.type('png').send(await QRCode.toBuffer(cardUrl(c, req), { width: 320, margin: 2 })); } catch (e) { res.status(500).end(); }
+});
 
-app.get('/api/public/app-qr',async(req,res)=>{try{const url=(process.env.PUBLIC_URL||`${req.protocol}://${req.get('host')}`).replace(/\/$/,'')+'/';const png=await QRCode.toBuffer(url,{width:520,margin:2});res.type('png').send(png)}catch(e){res.status(500).end()}});
+app.post('/api/public/register', tx(req => {
+  if (limited('reg:' + req.ip, 10, 3600000)) bad('Trop d’inscriptions depuis cet appareil. Réessayez plus tard ou demandez en boutique.', 429);
+  const x = req.body || {};
+  const d = readCustomerInput(x, { requireEmail: true });
+  if (!x.terms_accepted) bad('Vous devez accepter les conditions et la politique de confidentialité.');
+  if (phoneTaken(d.phone)) bad('Ce numéro de téléphone a déjà une carte. Demandez votre lien en boutique.', 409);
+  const t = nowIso();
+  const c = { id: nextId('customers'), ...d, marketing_email_at: d.marketing_email ? t : null, marketing_sms_at: d.marketing_sms ? t : null,
+    terms_accepted_at: t, points: 0, public_token: newToken(), created_at: t, source: 'cliente' };
+  db.customers.push(c);
+  return { token: c.public_token };
+}));
 
-function auth(req,res,next){const h=req.headers.authorization||'';if(!h.startsWith('Basic '))return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Connexion requise'});const raw=Buffer.from(h.slice(6),'base64').toString(),i=raw.indexOf(':'),u=raw.slice(0,i),p=raw.slice(i+1),user=db.users.find(x=>x.username===u&&x.password_hash===hash(p));if(!user)return res.status(401).set('WWW-Authenticate','Basic realm="Esprit Mode"').json({error:'Identifiants incorrects'});req.user={id:user.id,username:user.username,role:user.role,display_name:user.display_name||user.username};next()}
-function allow(...roles){return (req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({error:'Accès non autorisé'})}
-const adminOnly=allow('admin'),managerOnly=allow('admin','manager'),salesOnly=allow('admin','manager','seller');
-function pointsForCents(cents){return Math.max(0,Math.floor((cents/100)*Number(db.settings?.points_per_euro||1)));}
-function publicUrl(t,req){return `${(process.env.PUBLIC_URL||`${req.protocol}://${req.get('host')}`).replace(/\/$/,'')}/carte.html?token=${encodeURIComponent(t)}`}
+function customerByToken(token) {
+  const c = db.customers.find(x => x.public_token === token && !x.deleted);
+  if (!c) bad('Carte introuvable', 404);
+  return c;
+}
+app.get('/api/public/customer/token/:token', read(req => {
+  const c = customerByToken(req.params.token);
+  return {
+    customer: { first_name: c.first_name, last_name: c.last_name, phone: c.phone, email: c.email, birth_date: c.birth_date, address: c.address,
+      postal_code: c.postal_code, city: c.city, marketing_email: !!c.marketing_email, marketing_sms: !!c.marketing_sms, points: c.points,
+      created_at: c.created_at, deletion_requested: !!c.deletion_requested_at },
+    rule: { threshold: S().threshold, voucher_value: S().voucher_value_cents / 100, validity_days: S().voucher_validity_days, points_per_euro: S().points_per_euro, conditions: S().voucher_conditions || '' },
+    redemptions: db.redemptions.filter(r => r.customer_id === c.id).map(r => ({ created_at: r.created_at, points_used: r.points_used, value: (r.value_cents || 0) / 100 })),
+    vouchers: db.vouchers.filter(v => v.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 10).map(publicVoucher),
+    history: db.purchases.filter(x => x.customer_id === c.id && !x.cancelled).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 20)
+      .map(x => ({ created_at: x.created_at, amount: x.amount_cents / 100, points: x.points }))
+  };
+}));
+app.put('/api/public/customer/token/:token', tx(req => {
+  if (limited('upd:' + req.ip, 30, 3600000)) bad('Trop de modifications. Réessayez plus tard.', 429);
+  const c = customerByToken(req.params.token);
+  const d = readCustomerInput(req.body || {}, { requireEmail: true });
+  if (phoneTaken(d.phone, c.id)) bad('Ce numéro est déjà utilisé par une autre carte.', 409);
+  for (const k of ['first_name', 'last_name', 'phone', 'email', 'birth_date', 'address', 'postal_code', 'city']) c[k] = d[k];
+  applyConsents(c, d);
+  return { ok: true };
+}));
+app.post('/api/public/customer/token/:token/delete-request', tx(req => {
+  const c = customerByToken(req.params.token);
+  c.deletion_requested_at = nowIso(); c.marketing_email = false; c.marketing_sms = false; c.marketing_email_at = c.marketing_sms_at = nowIso();
+  audit(null, 'demande_suppression', `${c.first_name} ${c.last_name}`);
+}));
+app.get('/desinscription', async (req, res) => {
+  const c = db.customers.find(x => x.public_token === String(req.query.token || '') && !x.deleted);
+  let msg = 'Lien inconnu.';
+  if (c) { c.marketing_email = false; c.marketing_email_at = nowIso(); try { await persist(); msg = "C'est noté : vous ne recevrez plus les offres d'esprit mode par e-mail."; } catch (e) { msg = 'Une erreur est survenue, réessayez plus tard.'; } }
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>esprit mode</title><body style="font-family:system-ui;background:#f7f3ee;padding:40px 20px;text-align:center"><h1 style="font-weight:500;letter-spacing:.08em">esprit mode</h1><p>${msg}</p></body>`);
+});
 
-app.get('/api/me',auth,(req,res)=>res.json({id:req.user.id,username:req.user.username,role:req.user.role,display_name:req.user.display_name}));
-app.post('/api/public/register',(req,res)=>{const x=req.body||{};if(!x.first_name||!x.last_name||!x.phone||!x.email)return res.status(400).json({error:'Prénom, nom, téléphone et e-mail sont obligatoires'});if(!x.terms_accepted)return res.status(400).json({error:'Vous devez accepter les conditions et la politique de confidentialité.'});if(db.customers.some(c=>c.phone===String(x.phone).trim()))return res.status(409).json({error:'Ce numéro de téléphone est déjà enregistré.'});const c={id:id('customers'),first_name:String(x.first_name).trim(),last_name:String(x.last_name).trim(),phone:String(x.phone).trim(),email:String(x.email||'').trim(),birth_date:String(x.birth_date||''),marketing_email:!!x.marketing_email,marketing_sms:!!x.marketing_sms,terms_accepted_at:new Date().toISOString(),address:String(x.address||'').trim(),postal_code:String(x.postal_code||'').trim(),city:String(x.city||'').trim(),points:0,public_token:token(),created_at:new Date().toISOString()};db.customers.push(c);save();res.json({token:c.public_token,customer:c})});
-app.get('/api/public/qr/:token',async(req,res)=>{const c=db.customers.find(x=>x.public_token===req.params.token);if(!c)return res.status(404).end();try{const png=await QRCode.toBuffer(publicUrl(c.public_token,req),{width:320,margin:2});res.type('png').send(png)}catch(e){res.status(500).end()}});
-app.put('/api/public/customer/token/:token',(req,res)=>{const c=db.customers.find(x=>x.public_token===req.params.token);if(!c)return res.status(404).json({error:'Carte introuvable'});const x=req.body||{};for(const k of ['first_name','last_name','phone','email','birth_date','address','postal_code','city'])if(x[k]!==undefined)c[k]=String(x[k]).trim();if(x.marketing_email!==undefined)c.marketing_email=!!x.marketing_email;if(x.marketing_sms!==undefined)c.marketing_sms=!!x.marketing_sms;save();res.json(c)});
-app.get('/api/public/customer/token/:token',(req,res)=>{const c=db.customers.find(x=>x.public_token===req.params.token);if(!c)return res.status(404).json({error:'Carte introuvable'});res.json({customer:c,history:db.purchases.filter(x=>x.customer_id===c.id).sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,20).map(x=>({...x,amount:x.amount_cents/100})),rewards:db.rewards.filter(x=>x.active)});});
-app.get('/api/customers',auth,salesOnly,(req,res)=>{const q=String(req.query.q||'').toLowerCase();let a=db.customers;if(q)a=a.filter(c=>[c.first_name,c.last_name,c.phone,c.email].some(v=>String(v).toLowerCase().includes(q)));res.json(a.sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,100))});
-app.get('/api/customers/by-token/:token',auth,salesOnly,(req,res)=>{const c=db.customers.find(x=>x.public_token===req.params.token);if(!c)return res.status(404).json({error:'Cliente introuvable'});res.json(c)});
-app.post('/api/customers',auth,salesOnly,(req,res)=>{const x=req.body||{};if(!x.first_name||!x.last_name||!x.phone||!x.email)return res.status(400).json({error:'Prénom, nom, téléphone et e-mail obligatoires'});if(!x.terms_accepted)return res.status(400).json({error:'Acceptation des conditions obligatoire'});if(db.customers.some(c=>c.phone===x.phone))return res.status(409).json({error:'Ce numéro existe déjà'});const c={id:id('customers'),first_name:x.first_name,last_name:x.last_name,phone:x.phone,email:x.email||'',birth_date:x.birth_date||'',marketing_email:!!x.marketing_email,marketing_sms:!!x.marketing_sms,terms_accepted_at:new Date().toISOString(),address:String(x.address||'').trim(),postal_code:String(x.postal_code||'').trim(),city:String(x.city||'').trim(),points:0,public_token:token(),created_at:new Date().toISOString()};db.customers.push(c);save();res.json(c)});
-app.get('/api/customers/:id/history',auth,salesOnly,(req,res)=>res.json(db.purchases.filter(x=>x.customer_id===Number(req.params.id)).sort((a,b)=>b.created_at.localeCompare(a.created_at)).map(x=>({...x,amount:x.amount_cents/100}))));
-app.put('/api/customers/:id',auth,managerOnly,(req,res)=>{const c=db.customers.find(x=>x.id===Number(req.params.id));if(!c)return res.status(404).json({error:'Cliente introuvable'});const x=req.body||{};for(const k of ['first_name','last_name','phone','email','birth_date','address','postal_code','city'])if(x[k]!==undefined)c[k]=String(x[k]).trim();if(x.marketing_email!==undefined)c.marketing_email=!!x.marketing_email;if(x.marketing_sms!==undefined)c.marketing_sms=!!x.marketing_sms;save();res.json(c)});
-app.get('/api/customers/:id/profile',auth,managerOnly,(req,res)=>{const idn=Number(req.params.id),c=db.customers.find(x=>x.id===idn);if(!c)return res.status(404).json({error:'Cliente introuvable'});const purchases=db.purchases.filter(x=>x.customer_id===idn).sort((a,b)=>b.created_at.localeCompare(a.created_at));const redemptions=db.redemptions.filter(x=>x.customer_id===idn).sort((a,b)=>b.created_at.localeCompare(a.created_at)).map(x=>({...x,reward_name:db.rewards.find(r=>r.id===x.reward_id)?.name||'Récompense'}));const total_cents=purchases.reduce((n,x)=>n+x.amount_cents,0);const nextReward=db.rewards.filter(x=>x.active&&x.points_cost>c.points).sort((a,b)=>a.points_cost-b.points_cost)[0]||null;res.json({customer:c,stats:{purchases:purchases.length,total_euros:total_cents/100,points:c.points,last_purchase:purchases[0]?.created_at||null,next_reward:nextReward?{name:nextReward.name,points_cost:nextReward.points_cost,remaining:nextReward.points_cost-c.points}:null},purchases:purchases.map(x=>({...x,amount:x.amount_cents/100})),redemptions});});
-app.post('/api/customers/:id/loyalty',auth,managerOnly,(req,res)=>{const idn=Number(req.params.id),c=db.customers.find(x=>x.id===idn),delta=Math.trunc(Number(req.body.delta)),reason=String(req.body.reason||'').trim();if(!c)return res.status(404).json({error:'Cliente introuvable'});if(!Number.isFinite(delta)||delta===0)return res.status(400).json({error:'Variation de points invalide'});if(!reason)return res.status(400).json({error:'Le motif est obligatoire'});if(c.points+delta<0)return res.status(400).json({error:'Le solde de points ne peut pas être négatif'});if(!Array.isArray(db.loyalty_adjustments))db.loyalty_adjustments=[];db.loyalty_adjustments.push({id:id('loyalty_adjustments'),customer_id:idn,delta,reason,created_at:new Date().toISOString(),by_user:req.user.username});c.points+=delta;save();res.json(c)});
+/* ======================= Connexion équipe ======================= */
 
-app.post('/api/purchases',auth,salesOnly,(req,res)=>{const customer_id=Number(req.body.customer_id),amount=Number(req.body.amount),c=db.customers.find(x=>x.id===customer_id);if(!c||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Montant invalide'});const cents=Math.round(amount*100),points=pointsForCents(cents);db.purchases.push({id:id('purchases'),customer_id,amount_cents:cents,points,created_at:new Date().toISOString(),by_user:req.user.username});c.points+=points;save();res.json(c)});
-app.get('/api/rewards',auth,salesOnly,(req,res)=>res.json(db.rewards.filter(x=>x.active)));app.post('/api/rewards',auth,adminOnly,(req,res)=>{const p=Number(req.body.points_cost),v=Math.round(Number(req.body.value_euros)*100);if(!req.body.name||p<=0||v<=0)return res.status(400).json({error:'Données invalides'});const r={id:id('rewards'),name:req.body.name,points_cost:p,value_cents:v,active:1};db.rewards.push(r);save();res.json(r)});
-app.post('/api/redemptions',auth,salesOnly,(req,res)=>{const c=db.customers.find(x=>x.id===Number(req.body.customer_id)),r=db.rewards.find(x=>x.id===Number(req.body.reward_id)&&x.active);if(!c||!r)return res.status(404).json({error:'Cliente ou récompense introuvable'});if(c.points<r.points_cost)return res.status(400).json({error:'Points insuffisants'});db.redemptions.push({id:id('redemptions'),customer_id:c.id,reward_id:r.id,points_used:r.points_cost,value_cents:r.value_cents,created_at:new Date().toISOString(),by_user:req.user.username});c.points-=r.points_cost;save();res.json(c)});
-app.get('/api/dashboard',auth,adminOnly,(req,res)=>{const now=Date.now(),day=86400000, today=new Date();const startToday=new Date(today.getFullYear(),today.getMonth(),today.getDate()).getTime(),startWeek=startToday-((today.getDay()+6)%7)*day,startMonth=new Date(today.getFullYear(),today.getMonth(),1).getTime();const purchases=db.purchases;const amountBetween=(a,b)=>purchases.filter(x=>new Date(x.created_at).getTime()>=a&&new Date(x.created_at).getTime()<b).reduce((n,x)=>n+x.amount_cents,0)/100;res.json({customers:db.customers.length,new_week:db.customers.filter(x=>new Date(x.created_at).getTime()>=startWeek).length,new_month:db.customers.filter(x=>new Date(x.created_at).getTime()>=startMonth).length,active:db.customers.filter(x=>purchases.some(p=>p.customer_id===x.id&&new Date(p.created_at).getTime()>=startMonth)).length,ca_today:amountBetween(startToday,now+1),ca_week:amountBetween(startWeek,now+1),ca_month:amountBetween(startMonth,now+1),sales_today:purchases.filter(x=>new Date(x.created_at).getTime()>=startToday).length,sales_month:purchases.filter(x=>new Date(x.created_at).getTime()>=startMonth).length,points_distributed:purchases.reduce((n,x)=>n+x.points,0),rewards_used:db.redemptions.length,near_reward:db.customers.filter(c=>db.rewards.some(r=>r.active&&r.points_cost>c.points&&r.points_cost-c.points<=25)).length});});
-app.get('/api/settings',auth,adminOnly,(req,res)=>res.json(db.settings));app.post('/api/settings',auth,adminOnly,(req,res)=>{const p=Number(req.body.points_per_euro);if(!Number.isFinite(p)||p<=0||p>100)return res.status(400).json({error:'Règle de points invalide'});db.settings.points_per_euro=p;save();res.json(db.settings)});
-app.get('/api/stats',auth,adminOnly,(req,res)=>{const total=db.purchases.reduce((n,x)=>n+x.amount_cents,0)/100;res.json({customers:db.customers.length,sales:db.purchases.length,total,points:db.customers.reduce((n,x)=>n+x.points,0)})});
-app.get('/api/export.csv',auth,adminOnly,(req,res)=>{const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';const csv='\ufeff'+['Prénom;Nom;Téléphone;E-mail;Date de naissance;Points;Inscription',...db.customers.map(r=>[r.first_name,r.last_name,r.phone,r.email,r.birth_date,r.points,r.created_at].map(esc).join(';'))].join('\n');res.set('Content-Type','text/csv; charset=utf-8').set('Content-Disposition','attachment; filename="esprit-mode-clientes.csv"').send(csv)});
-app.get('/api/users',auth,adminOnly,(req,res)=>res.json(db.users.map(x=>({id:x.id,username:x.username,role:x.role,display_name:x.display_name||x.username}))));
-app.post('/api/users',auth,adminOnly,(req,res)=>{const {username,password,role='seller',display_name=''}=req.body;if(!username||!password||!['admin','manager','seller'].includes(role))return res.status(400).json({error:'Identifiants ou rôle invalides'});if(db.users.some(x=>x.username===username))return res.status(409).json({error:'Cet utilisateur existe déjà'});if(role==='seller'&&db.users.filter(x=>x.role==='seller').length>=2)return res.status(400).json({error:'Maximum 2 comptes vendeuse autorisés.'});db.users.push({id:id('users'),username,password_hash:hash(password),role,display_name:display_name||username});save();res.json({ok:true})});
-app.get('/api/qr/:id',auth,salesOnly,async(req,res)=>{const c=db.customers.find(x=>x.id===Number(req.params.id));if(!c)return res.status(404).end();try{const png=await QRCode.toBuffer(publicUrl(c.public_token,req),{width:320,margin:2});res.type('png').send(png)}catch(e){res.status(500).json({error:'QR indisponible'})}});
-app.get('/api/campaigns',auth,managerOnly,(req,res)=>res.json(db.campaigns.sort((a,b)=>b.created_at.localeCompare(a.created_at))));
-app.post('/api/campaigns',auth,managerOnly,(req,res)=>{const x=req.body||{};if(!x.title||!x.message)return res.status(400).json({error:'Titre et message obligatoires'});const c={id:id('campaigns'),title:String(x.title).trim(),message:String(x.message).trim(),media_url:String(x.media_url||'').trim(),channels:{email:!!x.email,sms:!!x.sms,whatsapp:!!x.whatsapp,facebook:!!x.facebook,instagram:!!x.instagram},status:'brouillon',created_at:new Date().toISOString(),created_by:req.user.username};db.campaigns.push(c);save();res.json(c)});
-app.post('/api/campaigns/:id/status',auth,managerOnly,(req,res)=>{const c=db.campaigns.find(x=>x.id===Number(req.params.id));if(!c)return res.status(404).json({error:'Campagne introuvable'});if(!['brouillon','prete'].includes(req.body.status))return res.status(400).json({error:'Statut invalide'});c.status=req.body.status;save();res.json(c)});
+app.post('/api/login', tx(req => {
+  const u = String((req.body || {}).username || '').trim().toLowerCase(), p = String((req.body || {}).password || '');
+  const kIp = 'login-ip:' + req.ip, kU = 'login-u:' + u;
+  if (isBlocked(kIp, 20, 900000) || isBlocked(kU, 5, 900000)) bad('Trop d’essais. Réessayez dans 15 minutes.', 429);
+  const user = db.users.find(x => String(x.username).toLowerCase() === u && x.active !== false);
+  if (!user || !checkPw(p, user.password_hash)) {
+    limited(kIp, 20, 900000); limited(kU, 5, 900000);
+    if (user && user.needs_reset) bad("Ce compte attend un nouveau mot de passe : Élie le définit dans Administration > Équipe.", 401);
+    bad('Identifiants incorrects', 401);
+  }
+  hits.delete(kU);
+  const token = newToken();
+  db.sessions = db.sessions.filter(s => s.expires > Date.now());
+  db.sessions.push({ hash: sha(token), user_id: user.id, created_at: nowIso(), expires: Date.now() + SESSION_DAYS * DAY });
+  return { token, role: user.role, display_name: user.display_name || user.username };
+}));
+app.post('/api/logout', auth, tx(req => { db.sessions = db.sessions.filter(s => s.hash !== req.sessionHash); }));
+app.get('/api/me', auth, (req, res) => { const u = db.users.find(x => x.id === req.user.id); res.json({ ...req.user, weak: !!(u && u.weak), admin_env: req.user.username === ADMIN_USERNAME && ADMIN_PASSWORD.length >= 10 }); });
+app.post('/api/me/password', auth, tx(req => {
+  const u = db.users.find(x => x.id === req.user.id);
+  const { current, password } = req.body || {};
+  if (!checkPw(current, u.password_hash)) bad('Mot de passe actuel incorrect.');
+  if (String(password || '').length < 8) bad('Le nouveau mot de passe doit contenir au moins 8 caractères.');
+  if (u.username === ADMIN_USERNAME && ADMIN_PASSWORD.length >= 10) bad('Ce mot de passe est fixé dans Render (variable ADMIN_PASSWORD) : changez-le là-bas.');
+  u.password_hash = hashPw(password); u.weak = false;
+  db.sessions = db.sessions.filter(s => s.user_id !== u.id || s.hash === req.sessionHash);
+}));
 
-bootstrap().then(()=>app.listen(PORT,HOST,()=>console.log(`Esprit Mode v0.7.4: http://${HOST}:${PORT} storage=${pool?'postgres':'file'}`))).catch(e=>{console.error('Startup:',e);process.exit(1)});
+/* ======================= Utilisateurs (admin) ======================= */
+
+const ROLES = ['admin', 'manager', 'seller'];
+app.get('/api/users', auth, adminOnly, read(() => db.users.map(u => ({ id: u.id, username: u.username, role: u.role, display_name: u.display_name || u.username,
+  active: u.active !== false, needs_reset: !!u.needs_reset, weak: !!u.weak, protected: u.username === ADMIN_USERNAME }))));
+app.post('/api/users', auth, adminOnly, tx(req => {
+  const x = req.body || {};
+  const username = clean(x.username, 40).toLowerCase(), password = String(x.password || ''), role = x.role;
+  if (!/^[a-z0-9._-]{3,40}$/.test(username)) bad('Identifiant : 3 à 40 caractères, lettres, chiffres, point ou tiret.');
+  if (password.length < 8) bad('Le mot de passe doit contenir au moins 8 caractères.');
+  if (!ROLES.includes(role)) bad('Rôle invalide.');
+  if (db.users.some(u => String(u.username).toLowerCase() === username)) bad('Cet identifiant existe déjà.', 409);
+  db.users.push({ id: nextId('users'), username, password_hash: hashPw(password), role, display_name: clean(x.display_name, 40) || username, active: true, created_at: nowIso() });
+  audit(req.user, 'creation_utilisateur', username + ' (' + role + ')');
+}));
+app.put('/api/users/:id', auth, adminOnly, tx(req => {
+  const u = db.users.find(x => x.id === Number(req.params.id)); if (!u) bad('Utilisateur introuvable.', 404);
+  const x = req.body || {};
+  if (u.username === ADMIN_USERNAME && (x.active === false || (x.role && x.role !== 'admin'))) bad('Le compte administrateur principal ne peut pas être désactivé.');
+  if (x.display_name !== undefined) u.display_name = clean(x.display_name, 40) || u.username;
+  if (x.role !== undefined) { if (!ROLES.includes(x.role)) bad('Rôle invalide.'); u.role = x.role; }
+  if (x.active !== undefined) u.active = !!x.active;
+  if (x.password) {
+    if (u.username === ADMIN_USERNAME) bad('Le mot de passe du compte principal se change dans « Mon mot de passe ».');
+    if (String(x.password).length < 8) bad('Le mot de passe doit contenir au moins 8 caractères.');
+    u.password_hash = hashPw(x.password); u.weak = false; u.needs_reset = false;
+  }
+  if (x.password || x.active === false || x.role !== undefined) db.sessions = db.sessions.filter(s => s.user_id !== u.id);
+  audit(req.user, 'modification_utilisateur', u.username);
+}));
+app.delete('/api/users/:id', auth, adminOnly, tx(req => {
+  const u = db.users.find(x => x.id === Number(req.params.id)); if (!u) bad('Utilisateur introuvable.', 404);
+  if (u.username === ADMIN_USERNAME || u.id === req.user.id) bad('Ce compte ne peut pas être supprimé.');
+  db.users = db.users.filter(x => x !== u); db.sessions = db.sessions.filter(s => s.user_id !== u.id);
+  audit(req.user, 'suppression_utilisateur', u.username);
+}));
+
+/* ======================= Clientes ======================= */
+
+app.get('/api/customers', auth, salesOnly, read(req => {
+  const q = String(req.query.q || '').trim().toLowerCase(); const digits = q.replace(/\D/g, '');
+  let a = liveCustomers();
+  if (q) a = a.filter(c => (digits.length >= 2 && /^[\d\s.+-]+$/.test(q) && c.phone.includes(normPhone(q))) ||
+    [c.first_name, c.last_name, c.email, `${c.first_name} ${c.last_name}`].some(v => String(v || '').toLowerCase().includes(q)));
+  return a.sort((x, y) => y.created_at.localeCompare(x.created_at)).slice(0, 100).map(customerSummary);
+}));
+app.post('/api/customers', auth, salesOnly, tx(req => {
+  const x = req.body || {};
+  const d = readCustomerInput(x, { requireEmail: true });
+  if (!x.terms_accepted) bad('La cliente doit accepter les conditions et la politique de confidentialité.');
+  if (phoneTaken(d.phone)) bad('Ce numéro appartient déjà à une cliente.', 409);
+  const t = nowIso();
+  const c = { id: nextId('customers'), ...d, marketing_email_at: d.marketing_email ? t : null, marketing_sms_at: d.marketing_sms ? t : null,
+    terms_accepted_at: t, points: 0, public_token: newToken(), created_at: t, source: 'boutique', created_by: req.user.username };
+  db.customers.push(c);
+  return customerSummary(c);
+}));
+function customerById(id) { const c = db.customers.find(x => x.id === Number(id) && !x.deleted); if (!c) bad('Cliente introuvable', 404); return c; }
+app.get('/api/customers/:id/profile', auth, salesOnly, read(req => {
+  const c = customerById(req.params.id);
+  const purchases = db.purchases.filter(x => x.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const live = purchases.filter(x => !x.cancelled);
+  return {
+    customer: { id: c.id, first_name: c.first_name, last_name: c.last_name, phone: c.phone, email: c.email, birth_date: c.birth_date, address: c.address,
+      postal_code: c.postal_code, city: c.city, marketing_email: !!c.marketing_email, marketing_email_at: c.marketing_email_at, marketing_sms: !!c.marketing_sms,
+      marketing_sms_at: c.marketing_sms_at, terms_accepted_at: c.terms_accepted_at, created_at: c.created_at, points: c.points, deletion_requested_at: c.deletion_requested_at || null },
+    card_url: cardUrl(c, req),
+    stats: { purchases: live.length, total_euros: live.reduce((n, x) => n + x.amount_cents, 0) / 100, points: c.points, last_purchase: live[0] ? live[0].created_at : null,
+      remaining: Math.max(0, S().threshold - c.points) },
+    purchases: purchases.map(x => ({ id: x.id, created_at: x.created_at, amount: x.amount_cents / 100, points: x.points, by_user: x.by_user, cancelled: !!x.cancelled })),
+    vouchers: db.vouchers.filter(v => v.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map(publicVoucher),
+    adjustments: db.loyalty_adjustments.filter(a => a.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    redemptions: db.redemptions.filter(r => r.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map(r => ({ created_at: r.created_at, points_used: r.points_used, value: (r.value_cents || 0) / 100, by_user: r.by_user, name: (db.rewards.find(w => w.id === r.reward_id) || {}).name || 'Récompense' }))
+  };
+}));
+app.put('/api/customers/:id', auth, managerOnly, tx(req => {
+  const c = customerById(req.params.id);
+  const d = readCustomerInput(req.body || {}, { requireEmail: true });
+  if (phoneTaken(d.phone, c.id)) bad('Ce numéro est déjà utilisé par une autre cliente.', 409);
+  for (const k of ['first_name', 'last_name', 'phone', 'email', 'birth_date', 'address', 'postal_code', 'city']) c[k] = d[k];
+  applyConsents(c, d);
+  return customerSummary(c);
+}));
+app.delete('/api/customers/:id', auth, adminOnly, tx(req => {
+  const c = customerById(req.params.id);
+  for (const p of db.purchases) if (p.customer_id === c.id) p.customer_id = null;
+  for (const a of db.loyalty_adjustments) if (a.customer_id === c.id) a.customer_id = null;
+  db.vouchers = db.vouchers.filter(v => v.customer_id !== c.id);
+  db.customers = db.customers.filter(x => x !== c);
+  audit(req.user, 'suppression_cliente', `${c.first_name} ${c.last_name}`);
+}));
+app.post('/api/customers/:id/loyalty', auth, managerOnly, tx(req => {
+  const c = customerById(req.params.id);
+  const delta = Math.trunc(Number((req.body || {}).delta)), reason = clean((req.body || {}).reason, 200);
+  if (!Number.isFinite(delta) || delta === 0) bad('Variation de points invalide.');
+  if (!reason) bad('Le motif est obligatoire.');
+  if (c.points + delta < 0) bad('Le solde de points ne peut pas être négatif.');
+  db.loyalty_adjustments.push({ id: nextId('loyalty_adjustments'), customer_id: c.id, delta, reason, created_at: nowIso(), by_user: req.user.username });
+  c.points += delta;
+  const made = autoVouchers(c, req.user);
+  audit(req.user, 'ajustement_points', `${c.first_name} ${c.last_name} ${delta > 0 ? '+' : ''}${delta} (${reason})`);
+  return { points: c.points, vouchers_created: made.map(publicVoucher) };
+}));
+app.post('/api/customers/:id/paper', auth, salesOnly, tx(req => {
+  const c = customerById(req.params.id);
+  const euros = Math.floor(Number((req.body || {}).amount));
+  if (!(euros > 0) || euros > S().threshold) bad(`Indiquez le montant tamponné, entre 1 et ${S().threshold} €.`);
+  const pts = pointsForCents(euros * 100);
+  db.loyalty_adjustments.push({ id: nextId('loyalty_adjustments'), customer_id: c.id, delta: pts, reason: `Reprise de la carte papier (${euros} €)`, created_at: nowIso(), by_user: req.user.username });
+  c.points += pts;
+  const made = autoVouchers(c, req.user);
+  return { points: c.points, vouchers_created: made.map(publicVoucher) };
+}));
+
+/* ======================= Achats et bons ======================= */
+
+app.post('/api/purchases', auth, salesOnly, tx(req => {
+  const x = req.body || {};
+  const c = customerById(x.customer_id);
+  const amount = Number(String(x.amount).replace(',', '.'));
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 50000) bad('Montant invalide.');
+  const ids = Array.isArray(x.voucher_ids) ? x.voucher_ids.map(Number) : [];
+  const used = ids.map(id => db.vouchers.find(v => v.id === id && v.customer_id === c.id));
+  if (used.some(v => !v || voucherStatus(v) !== 'active')) bad('Un des bons n’est plus utilisable. Rechargez la fiche.');
+  const cents = Math.round(amount * 100), points = pointsForCents(cents), t = nowIso();
+  for (const v of used) { v.status = 'used'; v.used_at = t; v.used_by = req.user.username; }
+  const p = { id: nextId('purchases'), customer_id: c.id, amount_cents: cents, points, created_at: t, by_user: req.user.username, vouchers_used: used.map(v => v.id) };
+  db.purchases.push(p);
+  c.points += points;
+  const made = autoVouchers(c, req.user);
+  return { id: p.id, points: c.points, added: points, vouchers_used: used.map(publicVoucher), vouchers_created: made.map(publicVoucher), first_name: c.first_name, last_name: c.last_name };
+}));
+app.post('/api/purchases/:id/cancel', auth, managerOnly, tx(req => {
+  const p = db.purchases.find(x => x.id === Number(req.params.id)); if (!p || p.cancelled) bad('Achat introuvable ou déjà annulé.', 404);
+  const c = p.customer_id ? db.customers.find(x => x.id === p.customer_id) : null;
+  if (c && c.points - p.points < 0) bad('Impossible : ces points ont déjà servi à créer un bon. Annulez d’abord le bon correspondant.');
+  if (c) c.points -= p.points;
+  for (const id of p.vouchers_used || []) { const v = db.vouchers.find(x => x.id === id); if (v && v.status === 'used') { v.status = 'active'; v.used_at = null; v.used_by = null; } }
+  p.cancelled = true; p.cancelled_at = nowIso(); p.cancelled_by = req.user.username;
+  audit(req.user, 'annulation_achat', `#${p.id} ${(p.amount_cents / 100).toFixed(2)} €`);
+  return { points: c ? c.points : null };
+}));
+app.get('/api/customers/:id/vouchers', auth, salesOnly, read(req => activeVouchers(customerById(req.params.id).id).map(publicVoucher)));
+app.post('/api/customers/:id/vouchers', auth, managerOnly, tx(req => {
+  const c = customerById(req.params.id);
+  if (c.points < S().threshold) bad('La carte n’est pas encore pleine.');
+  return publicVoucher(createVoucher(c, req.user));
+}));
+app.post('/api/vouchers/:id/use', auth, salesOnly, tx(req => {
+  const v = db.vouchers.find(x => x.id === Number(req.params.id)); if (!v || voucherStatus(v) !== 'active') bad('Ce bon n’est plus utilisable.');
+  v.status = 'used'; v.used_at = nowIso(); v.used_by = req.user.username;
+  return publicVoucher(v);
+}));
+app.post('/api/vouchers/:id/cancel', auth, managerOnly, tx(req => {
+  const v = db.vouchers.find(x => x.id === Number(req.params.id)); if (!v || voucherStatus(v) !== 'active') bad('Seul un bon non utilisé peut être annulé.');
+  const c = db.customers.find(x => x.id === v.customer_id);
+  v.status = 'cancelled'; if (c) c.points += v.points_used;
+  audit(req.user, 'annulation_bon', `#${v.id}`);
+  return { points: c ? c.points : null };
+}));
+app.get('/api/vouchers', auth, managerOnly, read(() => {
+  const names = Object.fromEntries(db.customers.map(c => [c.id, c]));
+  return db.vouchers.filter(v => voucherStatus(v) === 'active').sort((a, b) => a.expires_at.localeCompare(b.expires_at))
+    .map(v => ({ ...publicVoucher(v), customer_id: v.customer_id, customer: names[v.customer_id] ? `${names[v.customer_id].first_name} ${names[v.customer_id].last_name}` : '' }));
+}));
+
+/* ======================= Tableau de bord et réglages ======================= */
+
+app.get('/api/dashboard', auth, adminOnly, read(() => {
+  const t = new Date(); const startToday = new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime();
+  const startWeek = startToday - ((t.getDay() + 6) % 7) * DAY, startMonth = new Date(t.getFullYear(), t.getMonth(), 1).getTime();
+  const purchases = db.purchases.filter(x => !x.cancelled); const ts = x => new Date(x.created_at).getTime();
+  const sum = from => purchases.filter(x => ts(x) >= from).reduce((n, x) => n + x.amount_cents, 0) / 100;
+  const customers = liveCustomers();
+  return {
+    customers: customers.length, new_week: customers.filter(x => ts(x) >= startWeek).length, new_month: customers.filter(x => ts(x) >= startMonth).length,
+    active_90: new Set(purchases.filter(x => ts(x) >= Date.now() - 90 * DAY).map(x => x.customer_id)).size,
+    ca_today: sum(startToday), ca_week: sum(startWeek), ca_month: sum(startMonth),
+    sales_today: purchases.filter(x => ts(x) >= startToday).length, sales_month: purchases.filter(x => ts(x) >= startMonth).length,
+    points_distributed: purchases.reduce((n, x) => n + x.points, 0),
+    vouchers_created: db.vouchers.filter(v => v.status !== 'cancelled').length, vouchers_used: db.vouchers.filter(v => v.status === 'used').length + db.redemptions.length,
+    vouchers_active: db.vouchers.filter(v => voucherStatus(v) === 'active').length, vouchers_expired: db.vouchers.filter(v => voucherStatus(v) === 'expired').length,
+    near_reward: customers.filter(c => c.points >= S().threshold - 50).length,
+    deletion_requests: customers.filter(c => c.deletion_requested_at).map(c => ({ id: c.id, name: `${c.first_name} ${c.last_name}`, at: c.deletion_requested_at }))
+  };
+}));
+app.get('/api/settings', auth, salesOnly, (req, res) => res.json({ ...S(), voucher_value: S().voucher_value_cents / 100 }));
+app.post('/api/settings', auth, adminOnly, tx(req => {
+  const x = req.body || {};
+  const ppe = Number(x.points_per_euro), th = Math.floor(Number(x.threshold)), val = Number(x.voucher_value), days = Math.floor(Number(x.voucher_validity_days));
+  if (!(ppe > 0 && ppe <= 100)) bad('Points par euro : entre 0,01 et 100.');
+  if (!(th >= 10 && th <= 100000)) bad('Seuil de carte pleine invalide.');
+  if (!(val > 0 && val <= 10000)) bad('Valeur du bon invalide.');
+  if (!(days >= 1 && days <= 3650)) bad('Validité du bon : entre 1 et 3650 jours.');
+  db.settings = { points_per_euro: ppe, threshold: th, voucher_value_cents: Math.round(val * 100), voucher_validity_days: days, auto_voucher: !!x.auto_voucher, voucher_conditions: clean(x.voucher_conditions, 300) };
+  audit(req.user, 'reglages', JSON.stringify(db.settings));
+  return { ...S(), voucher_value: S().voucher_value_cents / 100 };
+}));
+app.get('/api/audit', auth, adminOnly, read(() => db.audit.slice(-200).reverse()));
+
+/* ======================= Exports ======================= */
+
+function csv(rows) { const e = v => { let s = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(s) && !/^-?\d/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; }; return '﻿' + rows.map(r => r.map(e).join(';')).join('\r\n'); }
+function sendCsv(res, name, rows) { res.set('Content-Type', 'text/csv; charset=utf-8').set('Content-Disposition', `attachment; filename="${name}"`).send(csv(rows)); }
+app.get('/api/export/customers.csv', auth, adminOnly, async (req, res) => {
+  audit(req.user, 'export_clientes', ''); persist().catch(() => {});
+  sendCsv(res, 'esprit-mode-clientes.csv', [['Prénom', 'Nom', 'Téléphone', 'E-mail', 'Date de naissance', 'Adresse', 'Code postal', 'Ville', 'Points', 'Bons actifs', 'Offres e-mail', 'Offres SMS', 'Inscription', 'Suppression demandée'],
+    ...liveCustomers().map(c => [c.first_name, c.last_name, c.phone, c.email, c.birth_date, c.address, c.postal_code, c.city, c.points, activeVouchers(c.id).length,
+      c.marketing_email ? 'oui' : 'non', c.marketing_sms ? 'oui' : 'non', c.created_at, c.deletion_requested_at || ''])]);
+});
+app.get('/api/export/purchases.csv', auth, adminOnly, async (req, res) => {
+  const names = Object.fromEntries(db.customers.map(c => [c.id, c]));
+  sendCsv(res, 'esprit-mode-achats.csv', [['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Points', 'Par', 'Annulé'],
+    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), p.points, p.by_user, p.cancelled ? 'oui' : 'non']; })]);
+});
+
+/* ======================= Campagnes (consentement obligatoire) ======================= */
+
+const CHANNELS = ['email', 'sms', 'whatsapp', 'facebook', 'instagram'];
+function recipients(channel) {
+  const base = liveCustomers().filter(c => !c.deletion_requested_at);
+  if (channel === 'email') return base.filter(c => c.marketing_email && c.email);
+  if (channel === 'sms' || channel === 'whatsapp') return base.filter(c => c.marketing_sms && c.phone);
+  return [];
+}
+app.get('/api/campaigns/audience', auth, managerOnly, read(() => ({
+  total: liveCustomers().length, email: recipients('email').length, sms: recipients('sms').length, whatsapp: recipients('whatsapp').length
+})));
+app.get('/api/campaigns', auth, managerOnly, read(() => [...db.campaigns].sort((a, b) => b.created_at.localeCompare(a.created_at))));
+app.post('/api/campaigns', auth, managerOnly, tx(req => {
+  const x = req.body || {};
+  const title = clean(x.title, 120), message = String(x.message || '').trim().slice(0, 3000);
+  if (!title || !message) bad('Titre et message obligatoires.');
+  const channels = Object.fromEntries(CHANNELS.map(k => [k, !!x[k]]));
+  if (!CHANNELS.some(k => channels[k])) bad('Choisissez au moins un canal.');
+  const counts = Object.fromEntries(['email', 'sms', 'whatsapp'].filter(k => channels[k]).map(k => [k, recipients(k).length]));
+  const c = { id: nextId('campaigns'), title, message, media_url: clean(x.media_url, 300), channels, recipients: counts, status: 'brouillon', created_at: nowIso(), created_by: req.user.username };
+  db.campaigns.push(c);
+  return c;
+}));
+app.post('/api/campaigns/:id/status', auth, managerOnly, tx(req => {
+  const c = db.campaigns.find(x => x.id === Number(req.params.id)); if (!c) bad('Campagne introuvable', 404);
+  if (!['brouillon', 'prete', 'envoyee'].includes((req.body || {}).status)) bad('Statut invalide');
+  c.status = req.body.status; return c;
+}));
+app.get('/api/campaigns/recipients.csv', auth, managerOnly, (req, res) => {
+  const ch = String(req.query.channel || '');
+  if (!['email', 'sms', 'whatsapp'].includes(ch)) return res.status(400).json({ error: 'Canal invalide' });
+  const list = recipients(ch);
+  audit(req.user, 'export_destinataires', ch + ' (' + list.length + ')'); persist().catch(() => {});
+  sendCsv(res, `destinataires-${ch}.csv`, [['Prénom', 'Nom', ch === 'email' ? 'E-mail' : 'Téléphone', 'Lien de désinscription'],
+    ...list.map(c => [c.first_name, c.last_name, ch === 'email' ? c.email : c.phone, ch === 'email' ? `${baseUrl(req)}/desinscription?token=${c.public_token}` : ''])]);
+});
+
+/* ======================= Lancement ======================= */
+
+bootstrap()
+  .then(() => app.listen(PORT, HOST, () => console.log(`esprit mode v${VERSION} : http://${HOST}:${PORT} — stockage ${pool ? 'PostgreSQL' : 'fichier local (tests uniquement)'}`)))
+  .catch(e => { console.error('Démarrage impossible :', e); process.exit(1); });

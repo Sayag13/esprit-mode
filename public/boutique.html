@@ -1,18 +1,132 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157"><link rel="manifest" href="manifest.json"><title>Esprit Mode — Michelle</title><style>body{font-family:system-ui;margin:0;background:#f7f3ee;color:#222}header{background:linear-gradient(135deg,#465157,#586267 55%,#3e494e);color:#fff;padding:20px}main{max-width:850px;margin:auto;padding:18px}.card{background:#fff;padding:18px;border-radius:18px;margin:12px 0;box-shadow:0 2px 12px #0001}input,textarea,button{font:inherit;padding:11px;border-radius:10px;border:1px solid #ccc;margin:4px;box-sizing:border-box;width:100%}textarea{min-height:130px}button{background:linear-gradient(135deg,#465157,#586267 55%,#3e494e);color:#fff}.channels{display:grid;grid-template-columns:1fr 1fr;gap:5px}.campaign{border:1px solid #ddd;border-radius:14px;padding:12px;margin:8px 0}.tag{display:inline-block;padding:4px 8px;background:#eee;border-radius:9px;margin:2px}</style></head><body><header><strong>esprit mode</strong> — 👑 Espace Michelle</header><main>
-<div class="card"><h2>👤 Recherche cliente</h2><input id="q" placeholder="Nom, téléphone, e-mail" oninput="searchCustomers()"><div id="customersList">Saisissez un nom, téléphone ou e-mail.</div></div>
-<div id="profile" class="card" style="display:none"></div>
-<div class="card"><h2>📣 Communication</h2><p>Prépare une campagne promotionnelle. L'envoi SMS/e-mail/WhatsApp sera activé lorsque les services d'envoi seront raccordés.</p><input id="title" placeholder="Titre de la promotion"><textarea id="message" placeholder="Votre message..."></textarea><input id="media" placeholder="Lien vers photo ou vidéo (optionnel)"><div class="channels"><label><input type="checkbox" id="email"> E-mail</label><label><input type="checkbox" id="sms"> SMS</label><label><input type="checkbox" id="whatsapp"> WhatsApp</label><label><input type="checkbox" id="facebook"> Facebook</label><label><input type="checkbox" id="instagram"> Instagram</label></div><button onclick="saveCampaign()">Enregistrer la campagne</button><div id="msg"></div></div>
-<div class="card"><h2>Campagnes</h2><div id="campaignList">Chargement…</div></div>
-</main><script>
-const H=()=>({Authorization:localStorage.auth||''});
-async function api(u,o={}){o.headers={...(o.headers||{}),...H(),'Content-Type':'application/json'};const r=await fetch(u,o);if(r.status===401){location.href='/login.html';throw 0}return r}
-function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-async function searchCustomers(){const qv=q.value.trim();if(!qv){customersList.innerHTML='Saisissez un nom, téléphone ou e-mail.';return}const r=await api('/api/customers?q='+encodeURIComponent(qv));const d=await r.json();customersList.innerHTML=d.length?d.map(c=>`<div class="campaign"><b>${esc(c.first_name)} ${esc(c.last_name)}</b><br>📞 ${esc(c.phone)} ${c.email?' · ✉️ '+esc(c.email):''}<br>⭐ <b>${c.points} points</b> <button onclick="openProfile(${c.id})">Voir la fiche</button></div>`).join(''):'<p>Aucune cliente trouvée.</p>'}
-async function openProfile(id){const r=await api('/api/customers/'+id+'/profile');const d=await r.json();if(!r.ok){alert(d.error||'Erreur');return}const c=d.customer,s=d.stats;profile.style.display='block';profile.innerHTML=`<h2>👤 ${esc(c.first_name)} ${esc(c.last_name)}</h2><p>📞 ${esc(c.phone)} · ✉️ ${esc(c.email||'—')}</p><p>📅 Cliente depuis ${new Date(c.created_at).toLocaleDateString('fr-FR')} · ${c.birth_date?'🎂 '+esc(c.birth_date):'Date de naissance non renseignée'}</p><p>📧 E-mail : <b>${c.marketing_email?'Oui':'Non'}</b> · 📱 SMS : <b>${c.marketing_sms?'Oui':'Non'}</b></p><div class="campaign"><b>Profil fidélité</b><br>🛍️ ${s.purchases} achats · 💰 ${s.total_euros.toFixed(2)} € dépensés · ⭐ <b>${s.points} points</b><br>${s.last_purchase?'Dernier achat : '+new Date(s.last_purchase).toLocaleString('fr-FR'):'Aucun achat'}</div><h3>🎁 Utiliser une récompense</h3><div id="rewardUse">Chargement…</div><h3>Ajuster la fidélité</h3><input id="delta" type="number" placeholder="Points : +50 ou -20"><input id="reason" placeholder="Motif obligatoire"><button onclick="adjustLoyalty(${c.id})">Enregistrer l'ajustement</button><h3>Historique des achats</h3>${d.purchases.length?'<table><tr><th>Date</th><th>Montant</th><th>Points</th><th>Par</th></tr>'+d.purchases.map(x=>`<tr><td>${new Date(x.created_at).toLocaleString('fr-FR')}</td><td>${x.amount.toFixed(2)} €</td><td>+${x.points}</td><td>${esc(x.by_user||'—')}</td></tr>`).join('')+'</table>':'<p>Aucun achat.</p>'}<h3>Récompenses utilisées</h3>${d.redemptions.length?d.redemptions.map(x=>`<p>🎁 ${esc(x.reward_name)} — ${x.points_used} points — ${new Date(x.created_at).toLocaleDateString('fr-FR')} — ${esc(x.by_user||'—')}</p>`).join(''):'<p>Aucune récompense utilisée.</p>'}`;loadRewardsForCustomer(c.id,c.points)}
-async function loadRewardsForCustomer(id,points){const r=await api('/api/rewards');const rewards=await r.json();const usable=rewards.filter(x=>x.points_cost<=points);rewardUse.innerHTML=usable.length?usable.map(x=>`<div class="campaign"><b>${esc(x.name)}</b> — ${x.points_cost} points — ${Number(x.value_cents/100).toFixed(2)} € <button onclick="redeem(${id},${x.id})">Utiliser</button></div>`).join(''):'<p>Aucune récompense disponible avec le solde actuel.</p>'}
-async function redeem(customerId,rewardId){const r=await api('/api/redemptions',{method:'POST',body:JSON.stringify({customer_id:customerId,reward_id:rewardId})});const d=await r.json();if(!r.ok){alert(d.error||'Impossible d’utiliser la récompense');return}alert('Récompense enregistrée. Nouveau solde : '+d.points+' points');openProfile(customerId)}
-async function adjustLoyalty(id){const delta=Number(document.getElementById('delta').value),reason=document.getElementById('reason').value.trim();const r=await api('/api/customers/'+id+'/loyalty',{method:'POST',body:JSON.stringify({delta,reason})});const d=await r.json();if(!r.ok){alert(d.error||'Erreur');return}alert('Fidélité mise à jour : '+d.points+' points');openProfile(id)}
-async function loadCampaigns(){const r=await api('/api/campaigns');const d=await r.json();campaignList.innerHTML=d.map(c=>`<div class="campaign"><b>${esc(c.title)}</b><p>${esc(c.message)}</p>${c.media_url?`<p>🎥 ${esc(c.media_url)}</p>`:''}<div>${Object.entries(c.channels).filter(x=>x[1]).map(x=>`<span class="tag">${esc(x[0])}</span>`).join(' ')}</div><small>${esc(c.status)} — ${new Date(c.created_at).toLocaleString('fr-FR')}</small></div>`).join('')||'<p>Aucune campagne.</p>'}
-async function saveCampaign(){const body={title:title.value,message:message.value,media_url:media.value,email:email.checked,sms:sms.checked,whatsapp:whatsapp.checked,facebook:facebook.checked,instagram:instagram.checked};const r=await api('/api/campaigns',{method:'POST',body:JSON.stringify(body)});const d=await r.json();msg.textContent=r.ok?'Campagne enregistrée.':'Erreur : '+d.error;if(r.ok){title.value=message.value=media.value='';loadCampaigns()}}
-loadCampaigns();
-</script></body></html>
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="manifest" href="manifest.json"><link rel="stylesheet" href="style.css"><title>Clientes & communication — esprit mode</title></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>clientes & communication</small></span><nav id="nav"></nav></header>
+<main>
+  <div class="card"><h2>Rechercher une cliente</h2>
+    <input id="q" type="search" placeholder="Nom, téléphone, e-mail" autocomplete="off">
+    <div id="list" class="small muted">Saisissez un nom, un téléphone ou un e-mail.</div></div>
+
+  <div id="profile" class="card hidden"></div>
+
+  <div class="card"><h2>Bons d'achat en cours</h2><div id="vouchers" class="small muted">Chargement…</div></div>
+
+  <form class="card" id="camp" novalidate><h2>Préparer une campagne</h2>
+    <div id="aud" class="grid"></div>
+    <p class="small muted">Seules les clientes qui ont accepté les offres par ce canal sont comptées. Les clientes qui ont demandé la suppression de leur compte sont toujours exclues.</p>
+    <input id="title" placeholder="Titre de la promotion *"><textarea id="message" placeholder="Votre message… *"></textarea>
+    <input id="media" placeholder="Lien vers photo ou vidéo (facultatif)">
+    <div class="grid">
+      <label class="check"><input type="checkbox" id="ch_email"> <span>E-mail</span></label>
+      <label class="check"><input type="checkbox" id="ch_sms"> <span>SMS</span></label>
+      <label class="check"><input type="checkbox" id="ch_whatsapp"> <span>WhatsApp</span></label>
+      <label class="check"><input type="checkbox" id="ch_facebook"> <span>Facebook (publication)</span></label>
+      <label class="check"><input type="checkbox" id="ch_instagram"> <span>Instagram (publication)</span></label>
+    </div>
+    <button id="campBtn">Enregistrer la campagne</button><div id="campMsg"></div>
+    <h3>Listes de destinataires (accord donné)</h3>
+    <div class="row"><button type="button" class="secondary small" data-dl="email">Adresses e-mail (CSV)</button><button type="button" class="secondary small" data-dl="sms">Numéros SMS (CSV)</button><button type="button" class="secondary small" data-dl="whatsapp">Numéros WhatsApp (CSV)</button></div>
+    <p class="small muted">Le fichier e-mail contient pour chaque cliente son lien de désinscription : ajoutez-le en bas de chaque e-mail envoyé.</p>
+  </form>
+  <div class="card"><h2>Campagnes</h2><div id="campList">Chargement…</div></div>
+</main>
+<script src="app.js"></script>
+<script>
+let ME = null, P = null, timer = null;
+(async () => { ME = await staffNav('boutique'); if (!ME) return; loadVouchers(); loadAudience(); loadCampaigns(); const cid = new URLSearchParams(location.search).get('c'); if (cid) openProfile(Number(cid)); })();
+
+$('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 200); });
+async function search() {
+  const q = $('q').value.trim(); if (!q) { $('list').innerHTML = 'Saisissez un nom, un téléphone ou un e-mail.'; return; }
+  try {
+    const d = await api('/api/customers?q=' + encodeURIComponent(q));
+    $('list').innerHTML = d.length ? d.map(c => `<div class="item"><div><div class="name">${esc(c.first_name)} ${esc(c.last_name)}</div><div class="small muted">${esc(fmtPhone(c.phone))}${c.email ? ' · ' + esc(c.email) : ''} · <b>${c.points} points</b>${c.vouchers ? ' · <span class="tag ok">bon</span>' : ''}${c.deletion_requested ? ' <span class="tag bad">suppression demandée</span>' : ''}</div></div><button class="small" data-open="${c.id}">Voir la fiche</button></div>`).join('') : '<p>Aucune cliente trouvée.</p>';
+  } catch (e) { $('list').textContent = e.message; }
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-open]'); if (b) openProfile(Number(b.dataset.open)); });
+
+async function openProfile(id) {
+  try { P = await api('/api/customers/' + id + '/profile'); } catch (e) { toast(e.message, true); return; }
+  renderProfile(); $('profile').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function renderProfile() {
+  const c = P.customer, s = P.stats;
+  $('profile').classList.remove('hidden');
+  $('profile').innerHTML = `
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(c.first_name)} ${esc(c.last_name)}</h2><button class="small secondary auto" id="closeP">Fermer</button></div>
+    ${c.deletion_requested_at ? `<p class="warn">Suppression demandée le ${fdate(c.deletion_requested_at)}. L'administrateur peut supprimer la fiche.</p>` : ''}
+    <div class="grid"><div class="kpi"><b>${s.points}</b><span>points (encore ${s.remaining})</span></div><div class="kpi"><b>${s.purchases}</b><span>achats</span></div><div class="kpi"><b>${money(s.total_euros)}</b><span>dépensés</span></div><div class="kpi"><b>${fdate(s.last_purchase)}</b><span>dernier achat</span></div></div>
+    ${stampGrid(s.points, 300)}
+    <h3>Coordonnées</h3>
+    <form id="edit" novalidate>
+      <div class="row"><input id="efn" value="${esc(c.first_name)}" placeholder="Prénom"><input id="eln" value="${esc(c.last_name)}" placeholder="Nom"></div>
+      <div class="row"><input id="eph" value="${esc(fmtPhone(c.phone))}" placeholder="Téléphone"><input id="eem" value="${esc(c.email)}" placeholder="E-mail"></div>
+      <div class="row"><input id="ebd" type="date" value="${esc(c.birth_date || '')}"><input id="ead" value="${esc(c.address || '')}" placeholder="Adresse"></div>
+      <div class="row"><input id="epc" value="${esc(c.postal_code || '')}" placeholder="Code postal"><input id="eci" value="${esc(c.city || '')}" placeholder="Ville"></div>
+      <label class="check"><input id="eme" type="checkbox" ${c.marketing_email ? 'checked' : ''}> <span>Accepte les offres par e-mail ${c.marketing_email_at ? '(depuis le ' + fdate(c.marketing_email_at) + ')' : ''}</span></label>
+      <label class="check"><input id="ems" type="checkbox" ${c.marketing_sms ? 'checked' : ''}> <span>Accepte les offres par SMS ${c.marketing_sms_at ? '(depuis le ' + fdate(c.marketing_sms_at) + ')' : ''}</span></label>
+      <button class="small" id="editBtn">Enregistrer les coordonnées</button></form>
+    <h3>Bons d'achat</h3>
+    ${P.vouchers.length ? P.vouchers.map(v => `<div class="item"><div>Bon de ${euros0(v.value)} <span class="small muted">créé le ${fdate(v.created_at)}, ${v.status === 'active' ? 'valable jusqu’au ' + fdate(v.expires_at) : v.status === 'used' ? 'utilisé le ' + fdate(v.used_at) : v.status === 'expired' ? 'expiré' : 'annulé'}</span></div>
+      ${v.status === 'active' ? `<div><button class="small" data-use="${v.id}">Utiliser</button><button class="small danger" data-vcancel="${v.id}">Annuler (rendre les points)</button></div>` : `<span class="tag">${{ used: 'utilisé', expired: 'expiré', cancelled: 'annulé' }[v.status]}</span>`}</div>`).join('') : '<p class="muted small">Aucun bon.</p>'}
+    ${s.points >= 300 ? `<button class="small" data-mkv="${c.id}">Créer le bon maintenant</button>` : ''}
+    <h3>Ajuster les points</h3>
+    <div class="row"><input id="delta" type="number" placeholder="+50 ou -20"><input id="reason" placeholder="Motif (obligatoire)"><button class="small auto" id="adjBtn">Enregistrer</button></div>
+    <h3>Historique des achats</h3>
+    ${P.purchases.length ? `<div class="tablewrap"><table><tr><th>Date</th><th>Montant</th><th>Points</th><th>Par</th><th></th></tr>${P.purchases.map(x => `<tr class="${x.cancelled ? 'cancelled' : ''}"><td>${fdt(x.created_at)}</td><td>${money(x.amount)}</td><td>+${x.points}</td><td>${esc(x.by_user || '—')}</td><td class="keep">${x.cancelled ? '<span class="tag">annulé</span>' : `<button class="small danger" data-pcancel="${x.id}">Annuler</button>`}</td></tr>`).join('')}</table></div>` : '<p class="muted small">Aucun achat.</p>'}
+    ${P.redemptions.length ? '<h3>Récompenses utilisées (ancien système)</h3>' + P.redemptions.map(r => `<div class="small">${fdate(r.created_at)} · ${esc(r.name)} · ${r.points_used} pts · ${esc(r.by_user || '')}</div>`).join('') : ''}
+    ${P.adjustments.length ? '<h3>Ajustements</h3>' + P.adjustments.map(a => `<div class="small">${fdate(a.created_at)} · ${a.delta > 0 ? '+' : ''}${a.delta} pts · ${esc(a.reason)} · ${esc(a.by_user)}</div>`).join('') : ''}
+    <h3>Lien de sa carte</h3><img class="qr" alt="QR code" src="/api/public/qr/${encodeURIComponent(P.card_url.split('token=')[1] || '')}">`;
+  $('closeP').addEventListener('click', () => $('profile').classList.add('hidden'));
+  $('edit').addEventListener('submit', saveEdit);
+  $('adjBtn').addEventListener('click', adjust);
+}
+async function act(fn, okMsg) { try { await fn(); if (okMsg) toast(okMsg); await openProfile(P.customer.id); loadVouchers(); } catch (e) { toast(e.message, true); } }
+$('profile').addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.dataset.use) act(() => api('/api/vouchers/' + t.dataset.use + '/use', { method: 'POST' }), 'Bon utilisé');
+  else if (t.dataset.vcancel) { if (confirm('Annuler ce bon et rendre les points à la cliente ?')) act(() => api('/api/vouchers/' + t.dataset.vcancel + '/cancel', { method: 'POST' }), 'Bon annulé'); }
+  else if (t.dataset.mkv) act(() => api('/api/customers/' + t.dataset.mkv + '/vouchers', { method: 'POST' }), 'Bon créé');
+  else if (t.dataset.pcancel) { if (confirm('Annuler cet achat ? Les points seront retirés.')) act(() => api('/api/purchases/' + t.dataset.pcancel + '/cancel', { method: 'POST' }), 'Achat annulé'); }
+});
+async function saveEdit(e) {
+  e.preventDefault();
+  act(() => api('/api/customers/' + P.customer.id, { method: 'PUT', body: { first_name: $('efn').value, last_name: $('eln').value, phone: $('eph').value, email: $('eem').value,
+    birth_date: $('ebd').value, address: $('ead').value, postal_code: $('epc').value, city: $('eci').value, marketing_email: $('eme').checked, marketing_sms: $('ems').checked } }), 'Fiche enregistrée');
+}
+function adjust() { act(() => api('/api/customers/' + P.customer.id + '/loyalty', { method: 'POST', body: { delta: Number($('delta').value), reason: $('reason').value } }), 'Points ajustés'); }
+
+async function loadVouchers() {
+  try {
+    const d = await api('/api/vouchers');
+    $('vouchers').innerHTML = d.length ? d.map(v => `<div class="item"><div><b>${esc(v.customer)}</b> · bon de ${euros0(v.value)} · jusqu'au ${fdate(v.expires_at)}</div><button class="small secondary" data-open="${v.customer_id}">Fiche</button></div>`).join('') : 'Aucun bon en cours.';
+  } catch (e) { $('vouchers').textContent = e.message; }
+}
+async function loadAudience() {
+  try { const a = await api('/api/campaigns/audience');
+    $('aud').innerHTML = `<div class="kpi"><b>${a.total}</b><span>clientes</span></div><div class="kpi"><b>${a.email}</b><span>acceptent l'e-mail</span></div><div class="kpi"><b>${a.sms}</b><span>acceptent SMS / WhatsApp</span></div>`;
+  } catch (e) {}
+}
+async function loadCampaigns() {
+  try {
+    const d = await api('/api/campaigns');
+    $('campList').innerHTML = d.map(c => `<div class="item" style="display:block"><b>${esc(c.title)}</b><p style="white-space:pre-line">${esc(c.message)}</p>${c.media_url ? `<p class="small">Média : ${esc(c.media_url)}</p>` : ''}
+      <div>${Object.entries(c.channels || {}).filter(x => x[1]).map(x => `<span class="tag">${esc(x[0])}${c.recipients && c.recipients[x[0]] !== undefined ? ' · ' + c.recipients[x[0]] + ' dest.' : ''}</span>`).join(' ')}</div>
+      <small class="muted">${esc(c.status)} — ${fdt(c.created_at)} — ${esc(c.created_by || '')}</small></div>`).join('') || '<p>Aucune campagne.</p>';
+  } catch (e) { $('campList').textContent = e.message; }
+}
+$('camp').addEventListener('submit', async e => {
+  e.preventDefault(); $('campBtn').disabled = true;
+  try {
+    const body = { title: $('title').value, message: $('message').value, media_url: $('media').value };
+    for (const k of ['email', 'sms', 'whatsapp', 'facebook', 'instagram']) body[k] = $('ch_' + k).checked;
+    const c = await api('/api/campaigns', { method: 'POST', body });
+    $('campMsg').className = 'ok'; $('campMsg').textContent = 'Campagne enregistrée.' + (c.recipients.email !== undefined ? ` E-mail : ${c.recipients.email} destinataires.` : '') + (c.recipients.sms !== undefined ? ` SMS : ${c.recipients.sms}.` : '');
+    $('title').value = $('message').value = $('media').value = ''; loadCampaigns();
+  } catch (err) { $('campMsg').className = 'err'; $('campMsg').textContent = err.message; }
+  $('campBtn').disabled = false;
+});
+$('camp').addEventListener('click', async e => { const b = e.target.closest('[data-dl]'); if (!b) return; try { await download('/api/campaigns/recipients.csv?channel=' + b.dataset.dl, 'destinataires-' + b.dataset.dl + '.csv'); } catch (err) { toast(err.message, true); } });
+</script>
+</body></html>

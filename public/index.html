@@ -1,12 +1,62 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157"><link rel="manifest" href="manifest.json"><title>Esprit Mode — Fidélité</title><style>
-:root{--ink:#465157;--ink2:#3e494e;--cream:#f7f3ee;--gold:#e7b9a8;--muted:#697177;--line:#e7ded6}*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--cream);color:var(--ink)}header{background:linear-gradient(135deg,#465157,#586267 55%,#3e494e);color:#fff;padding:18px 20px;text-align:center;letter-spacing:.04em;box-shadow:0 3px 18px #26313633}header strong{font-size:25px;font-weight:500;letter-spacing:.08em;text-transform:lowercase;color:#fff;text-shadow:0 2px 7px #0005}header div{font-size:11px;color:#f3ddd4;margin-top:3px;letter-spacing:.18em;text-transform:uppercase}main{max-width:640px;margin:auto;padding:16px 14px 38px}.hero{text-align:center;padding:20px 8px}.eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}h1,h2{font-family:Georgia,serif}h1{font-size:35px;line-height:1.05;margin:8px 0}.hero p{color:var(--muted)}.card{background:#fff;border:1px solid var(--line);border-radius:22px;padding:22px;margin:14px 0;box-shadow:0 7px 25px #0000000b}.card h2{font-size:23px;margin:0 0 8px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}input,button{font:inherit;padding:13px;border-radius:12px;margin:4px 0}input{width:100%;border:1px solid #d4cec5}button{border:1px solid var(--ink);background:var(--ink);color:#fff;cursor:pointer}.primary{width:100%;margin-top:10px;font-weight:700}.consent{font-size:13px;color:#4f4b45;margin-top:10px}.consent label{display:block;margin:9px 0}.consent input{width:auto;margin-right:7px}.secondary{text-align:center}.secondary button{background:#fff;color:var(--ink)}.optional{display:none}.toggle{font-size:13px;color:var(--ink);text-decoration:underline;cursor:pointer;margin:8px 4px}.ok{padding:13px;background:#eef6ee;border:1px solid #cfe1cf;border-radius:12px;margin-top:12px}.ok a{color:var(--ink);font-weight:700}.error{color:#9b1c1c;font-size:14px;margin-top:8px}.address{text-align:center;color:var(--muted);font-size:12px;line-height:1.5;margin-top:20px}@media(max-width:520px){.grid{grid-template-columns:1fr}h1{font-size:30px}}
-.appqr{display:block;width:190px;height:190px;margin:14px auto;border-radius:12px}.small{font-size:13px;color:var(--muted)}.store{padding:10px 0;border-bottom:1px solid var(--line)}.store:last-of-type{border:0}.phone{text-align:center;font-weight:700;color:var(--ink)}
-</style></head><body><header><strong>esprit mode</strong><div>carte de fidélité</div></header><main>
-<section class="hero"><div class="eyebrow">Maisons-Alfort</div><h1>Votre fidélité, autrement.</h1><p>Créez gratuitement votre carte et retrouvez vos points, vos avantages et vos achats sur votre téléphone.</p></section>
-<div class="card"><h2>Créer ma carte</h2><div class="grid"><input id="fn" placeholder="Prénom *"><input id="ln" placeholder="Nom *"></div><input id="ph" placeholder="Téléphone *"><input id="em" type="email" placeholder="E-mail *"><div class="toggle" onclick="toggleOptional()">+ Ajouter mes informations personnelles</div><div id="optional" class="optional"><div class="grid"><input id="bd" type="date" placeholder="Date de naissance"><input id="pc" placeholder="Code postal"></div><input id="ad" placeholder="Adresse"><input id="city" placeholder="Ville"></div><div class="consent"><label><input type="checkbox" id="terms"> J'accepte les conditions d'utilisation et la politique de confidentialité. *</label><label><input type="checkbox" id="me"> Je souhaite recevoir les offres et nouveautés par e-mail.</label><label><input type="checkbox" id="ms"> Je souhaite recevoir les offres et nouveautés par SMS.</label></div><button class="primary" onclick="register()">Créer ma carte de fidélité</button><div id="msg"></div></div>
-<div class="card secondary"><h2>Déjà cliente ?</h2><p>Utilisez votre lien personnel de carte ou demandez à la boutique de retrouver votre carte.</p><button onclick="login()">Espace boutique</button></div>
-<div class="card share"><h2>📲 Installer Esprit Mode</h2><p>Scannez le QR code pour ouvrir l'application, puis ajoutez-la à votre écran d'accueil.</p><img src="/api/public/app-qr" alt="QR code Esprit Mode" class="appqr"><button class="primary" onclick="shareApp()">Partager l'application</button><div id="installHelp" class="small"></div></div>
-<div class="card social"><h2>Suivez Esprit Mode</h2><p>Découvrez les nouveautés et les vidéos de Michelle.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener" style="display:block;text-align:center;text-decoration:none;background:#465157;color:#fff;border-radius:12px;padding:12px;font-weight:700">Instagram</a><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener" style="display:block;text-align:center;text-decoration:none;background:#465157;color:#fff;border-radius:12px;padding:12px;font-weight:700">Facebook</a></div></div><div class="card"><h2>Nos boutiques</h2><div class="store"><b>47 avenue Georges Clemenceau</b><br>94700 Maisons-Alfort</div><div class="store"><b>59 avenue du Général de Gaulle</b><br>94700 Maisons-Alfort</div><p class="phone">☎ 06 62 55 24 87</p></div>
-<div class="address"><strong>esprit mode</strong><br>Votre fidélité, autrement.</div></main>
-<script>function toggleOptional(){optional.style.display=optional.style.display==='block'?'none':'block'}async function register(){const body={first_name:fn.value.trim(),last_name:ln.value.trim(),phone:ph.value.trim(),email:em.value.trim(),birth_date:bd.value,address:ad.value,postal_code:pc.value,city:city.value,terms_accepted:terms.checked,marketing_email:me.checked,marketing_sms:ms.checked};const r=await fetch('/api/public/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();msg.innerHTML=r.ok?`<div class="ok">Bienvenue chez Esprit Mode ! <a href="/carte.html?token=${encodeURIComponent(d.token)}">Ouvrir ma carte</a></div>`:`<div class="error">${d.error}</div>`}async function shareApp(){const url=location.origin+'/';if(navigator.share){try{await navigator.share({title:'esprit mode — carte de fidélité',text:'Découvrez la carte de fidélité Esprit Mode',url})}catch(e){}}else{try{await navigator.clipboard.writeText(url);installHelp.textContent='Lien copié : '+url}catch(e){installHelp.textContent=url}}}
-function login(){location.href='/login.html'}if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js');</script></body></html>
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="manifest" href="manifest.json"><link rel="stylesheet" href="style.css"><title>esprit mode — Fidélité</title>
+<style>.hero{text-align:center;padding:18px 6px}.hero h1{font-family:Georgia,serif;font-weight:500;font-size:32px;margin:6px 0}.eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}.appqr{display:block;width:180px;height:180px;margin:10px auto}.soc{display:grid;grid-template-columns:1fr 1fr;gap:10px}.soc a{display:block;text-align:center;text-decoration:none;background:var(--ink);color:#fff;border-radius:12px;padding:12px;font-weight:600}</style>
+</head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>carte de fidélité</small></span></header>
+<main class="narrow">
+  <section class="hero"><div class="eyebrow">Maisons-Alfort</div><h1>Votre fidélité, autrement.</h1>
+    <p class="muted" id="ruleText">1 € dépensé = 1 point. À 300 points, votre carte est pleine : un bon d'achat de 30 € vous est offert, valable un an.</p></section>
+
+  <form class="card" id="reg" novalidate>
+    <h2>Créer ma carte</h2>
+    <div class="row"><input id="fn" placeholder="Prénom *" autocomplete="given-name"><input id="ln" placeholder="Nom *" autocomplete="family-name"></div>
+    <input id="ph" type="tel" inputmode="tel" placeholder="Téléphone * (06 12 34 56 78)" autocomplete="tel">
+    <input id="em" type="email" placeholder="E-mail *" autocomplete="email">
+    <details><summary class="small">Ajouter mes informations facultatives</summary>
+      <label class="field">Date de naissance<input id="bd" type="date"></label>
+      <input id="ad" placeholder="Adresse" autocomplete="street-address">
+      <div class="row"><input id="pc" placeholder="Code postal" inputmode="numeric" autocomplete="postal-code"><input id="city" placeholder="Ville" autocomplete="address-level2"></div>
+    </details>
+    <label class="check"><input type="checkbox" id="terms"> <span>J'accepte les conditions d'utilisation et la <a href="#confidentialite">politique de confidentialité</a>. *</span></label>
+    <label class="check"><input type="checkbox" id="me"> <span>Je souhaite recevoir les offres et nouveautés par e-mail (facultatif).</span></label>
+    <label class="check"><input type="checkbox" id="ms"> <span>Je souhaite recevoir les offres et nouveautés par SMS (facultatif).</span></label>
+    <button id="regBtn">Créer ma carte de fidélité</button>
+    <div id="msg"></div>
+  </form>
+
+  <div class="card"><h2>Déjà cliente ?</h2><p>Votre carte s'ouvre avec votre lien personnel (ajoutez-le à l'écran d'accueil de votre téléphone). Vous l'avez perdu ? Demandez-le en boutique : la vendeuse vous le montre en QR code.</p>
+    <p class="small"><a href="/login.html">Espace équipe</a></p></div>
+
+  <div class="card"><h2>Installer esprit mode</h2><p>Scannez ce QR code pour ouvrir la page sur votre téléphone, puis ajoutez-la à l'écran d'accueil.</p><img src="/api/public/app-qr" alt="QR code esprit mode" class="appqr"><button id="shareBtn">Partager l'application</button><div id="shareMsg" class="small muted"></div></div>
+
+  <div class="card"><h2>Suivez esprit mode</h2><p class="muted">Les nouveautés et les vidéos de Michelle.</p>
+    <div class="soc"><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener">Instagram</a><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener">Facebook</a></div></div>
+
+  <div class="card"><h2>Nos boutiques</h2><p><b>47 avenue Georges Clemenceau</b><br>94700 Maisons-Alfort</p><p><b>59 avenue du Général de Gaulle</b><br>94700 Maisons-Alfort</p><p>☎ 06 62 55 24 87</p></div>
+
+  <div class="card small" id="confidentialite"><h2>Confidentialité</h2>
+    <p><b>Responsable :</b> SARL EMS 26 (boutiques esprit mode, Maisons-Alfort) — espritmode13@gmail.com.</p>
+    <p><b>Données :</b> prénom, nom, téléphone, e-mail et, si vous les donnez, date de naissance et adresse ; vos achats enregistrés en boutique (date, montant, points).</p>
+    <p><b>Finalités :</b> gérer votre carte, vos points et vos bons d'achat. Vous envoyer des offres uniquement si vous l'avez accepté, par le canal choisi.</p>
+    <p><b>Durée :</b> tant que la carte est active, puis 3 ans après votre dernier achat ou contact.</p>
+    <p><b>Vos droits :</b> accès, rectification, suppression, retrait de votre accord pour les offres, depuis votre carte ou en boutique. Vos données ne sont ni vendues ni cédées.</p>
+  </div>
+</main>
+<script src="app.js"></script>
+<script>
+fetch('/api/public/config').then(r => r.json()).then(c => { if (c.rule) $('ruleText').textContent = `1 € dépensé = ${c.rule.points_per_euro} point${c.rule.points_per_euro > 1 ? 's' : ''}. À ${c.rule.threshold} points, votre carte est pleine : un bon d'achat de ${euros0(c.rule.voucher_value)} vous est offert, valable ${c.rule.validity_days >= 365 ? 'un an' : c.rule.validity_days + ' jours'}.`; }).catch(() => {});
+$('reg').addEventListener('submit', async e => {
+  e.preventDefault(); const b = $('regBtn'); b.disabled = true; $('msg').className = ''; $('msg').textContent = 'Création…';
+  try {
+    const body = { first_name: $('fn').value, last_name: $('ln').value, phone: $('ph').value, email: $('em').value, birth_date: $('bd').value, address: $('ad').value,
+      postal_code: $('pc').value, city: $('city').value, terms_accepted: $('terms').checked, marketing_email: $('me').checked, marketing_sms: $('ms').checked };
+    const d = await api('/api/public/register', { method: 'POST', body });
+    location.href = '/carte.html?token=' + encodeURIComponent(d.token) + '&bienvenue=1';
+  } catch (err) { $('msg').className = 'err'; $('msg').textContent = err.message; b.disabled = false; }
+});
+$('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+</script>
+</body></html>

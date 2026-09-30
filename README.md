@@ -1,20 +1,15 @@
-# Esprit Mode — v0.8.4
+# esprit mode — v0.9.0
 
-Rôles :
-- admin : Élie, back-office complet
-- manager : Michelle, gestion commerciale et communication
-- seller : vendeuses, saisie des achats uniquement
+Carte de fidélité (PWA) des boutiques esprit mode, Maisons-Alfort. Node.js + Express + PostgreSQL (Neon), hébergée sur Render.
 
-La communication est préparée dans l'espace Michelle. Les connecteurs SMS/e-mail/WhatsApp/réseaux sociaux devront être raccordés avant l'envoi réel.
+Rôles (contrôlés côté serveur) :
+- admin (Élie) : tout, y compris règle de fidélité, équipe, exports, suppressions RGPD ;
+- manager (Michelle) : fiches clientes, bons, ajustements avec motif, annulations, campagnes ;
+- seller (vendeuses) : caisse (recherche, création de cliente, achat, reprise de carte papier).
 
-## Données persistantes
+Règle par défaut : 1 € = 1 point ; carte pleine à 300 points = bon d'achat de 30 € valable 365 jours, créé automatiquement (réglable dans Administration).
 
-La version 0.7.2 peut utiliser PostgreSQL via la variable d'environnement `DATABASE_URL`. Lorsqu'elle est présente, toutes les données de l'application sont conservées dans une base PostgreSQL distante. Sans cette variable, l'application conserve le mode fichier local pour les tests.
+Variables Render : DATABASE_URL (Neon), ADMIN_PASSWORD (10 caractères min.), PUBLIC_URL, TZ=Europe/Paris.
+Aucun mot de passe n'est écrit dans le code.
 
-Pour Render Free, un PostgreSQL Render gratuit est possible mais expire après 30 jours. Pour une base gratuite durable, utiliser un fournisseur PostgreSQL externe compatible, puis renseigner sa chaîne `DATABASE_URL` dans Render.
-
-
-### Réseaux sociaux cliente
-- Instagram : https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/
-- Facebook : https://www.facebook.com/share/v/1Dn4Wx3Ww8/
-- Threads : non utilisé.
+Voir AUDIT-v0.8.md (état des lieux) et GUIDE-MISE-EN-LIGNE.md (passage en v0.9).

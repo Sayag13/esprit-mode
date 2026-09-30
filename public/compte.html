@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="stylesheet" href="style.css"><title>Mon mot de passe — esprit mode</title></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>mon compte</small></span><nav id="nav"></nav></header>
+<main class="narrow">
+  <form class="card" id="f" novalidate>
+    <h2>Changer mon mot de passe</h2>
+    <p id="envNote" class="warn hidden">Votre mot de passe est fixé dans Render (variable ADMIN_PASSWORD) : il se change là-bas.</p>
+    <label class="field">Mot de passe actuel<input id="cur" type="password" autocomplete="current-password"></label>
+    <label class="field">Nouveau mot de passe (8 caractères minimum)<input id="n1" type="password" autocomplete="new-password"></label>
+    <label class="field">Nouveau mot de passe, une deuxième fois<input id="n2" type="password" autocomplete="new-password"></label>
+    <button id="b">Enregistrer</button><div id="m"></div>
+  </form>
+</main>
+<script src="app.js"></script>
+<script>
+(async () => { const me = await staffNav('compte'); if (me && me.admin_env) { $('envNote').classList.remove('hidden'); $('b').disabled = true; } })();
+$('f').addEventListener('submit', async e => {
+  e.preventDefault(); $('m').className = '';
+  if ($('n1').value !== $('n2').value) { $('m').className = 'err'; $('m').textContent = 'Les deux nouveaux mots de passe ne sont pas identiques.'; return; }
+  try { await api('/api/me/password', { method: 'POST', body: { current: $('cur').value, password: $('n1').value } });
+    $('m').className = 'ok'; $('m').textContent = 'Mot de passe changé.'; ['cur', 'n1', 'n2'].forEach(i => $(i).value = ''); }
+  catch (err) { $('m').className = 'err'; $('m').textContent = err.message; }
+});
+</script>
+</body></html>

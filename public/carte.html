@@ -1,5 +1,86 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157"><title>Ma carte — Esprit Mode</title><style>:root{--anth:#4b565b;--anth2:#3e494e;--anth3:#667177;--cream:#f7f3ee;--paper:#fffdf9;--rose:#e7b9a8;--rose2:#dba18d;--text:#202529;--muted:#697177;--line:#e7ded6}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:linear-gradient(180deg,#f3eee8 0%,#faf8f5 55%,#f2ede7 100%);color:var(--text)}header{background:linear-gradient(135deg,#465157,#586267 55%,#3e494e);color:#fff;padding:18px;text-align:center;box-shadow:0 3px 18px #26313633;letter-spacing:.04em}header strong{font-size:27px;font-weight:500;letter-spacing:.08em;text-transform:lowercase;color:#fff;text-shadow:0 2px 7px #0005}header div{font-size:10px;color:#f3ddd4;letter-spacing:.22em;text-transform:uppercase;margin-top:2px}main{max-width:620px;margin:auto;padding:16px 14px 38px}.loyalty{background:linear-gradient(135deg,#4a555a 0%,#59656a 46%,#404b50 100%);color:#fff;border:1px solid #a9b1b4aa;border-radius:26px;padding:25px 22px;box-shadow:0 14px 34px #29323738, inset 0 1px 0 #ffffff30;position:relative;overflow:hidden}.loyalty:after{content:"";position:absolute;width:260px;height:260px;right:-100px;top:-90px;border-radius:50%;background:linear-gradient(135deg,#ffffff22,#e7b9a800 65%);pointer-events:none}.brand{letter-spacing:.16em;font-size:12px;color:#f0d3c8;text-transform:lowercase}.loyalty h1{font-family:Georgia,serif;font-size:30px;margin:20px 0 7px;position:relative;z-index:1}.points{font-size:55px;font-weight:800;line-height:1;color:#fff}.points-label{color:#f0f2f2}.next{margin-top:18px;padding:13px 14px;border:1px solid #e7b9a899;border-radius:14px;color:#fff7f3;background:#26313722}.qr{display:block;width:130px;height:130px;background:#fff;padding:7px;border-radius:13px;margin:18px auto 0;position:relative;z-index:1;box-shadow:0 7px 18px #1e272b40}.card{background:rgba(255,253,249,.97);border:1px solid var(--line);border-radius:20px;padding:20px;margin:14px 0;box-shadow:0 7px 24px #34302b10}.card h2{font-family:Georgia,serif;margin:0 0 10px;color:#2a2e31}.row{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}.muted{color:var(--muted)}.edit input,.edit button{font:inherit;padding:11px;border-radius:10px;border:1px solid #d4ccc4;margin:4px 0;width:100%;box-sizing:border-box}.edit input:focus{outline:2px solid #e7b9a866;border-color:var(--rose2)}.edit button{background:var(--anth2);color:#fff;border:0}.consent label{display:block;font-size:13px;margin:8px 0}.consent input{width:auto}.address{text-align:center;color:var(--muted);font-size:12px;line-height:1.5;margin-top:20px}.address strong{color:var(--anth2);text-transform:lowercase;letter-spacing:.12em}@media(max-width:520px){main{padding:12px 12px 30px}.loyalty{padding:22px 18px}.loyalty h1{font-size:28px}.points{font-size:52px}}.install button{width:100%;padding:12px;border:0;border-radius:11px;background:var(--anth2);color:#fff;font:inherit}.social-note{padding:12px;border-radius:12px;background:#f4eee8;color:var(--muted);font-size:13px}.social-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.social-item{border:1px solid var(--line);border-radius:16px;padding:12px;text-align:center;background:#fff}.social-item img{width:120px;height:120px;background:#fff;border-radius:10px;display:block;margin:4px auto 10px}.social-item a{display:block;text-decoration:none;background:var(--anth2);color:#fff;border-radius:10px;padding:10px;font-weight:700}.social-item small{display:block;color:var(--muted);margin:8px 0}@media(max-width:520px){.social-grid{grid-template-columns:1fr 1fr}.social-item img{width:105px;height:105px}}
-</style></head><body><header><strong>esprit mode</strong><div>ma carte de fidélité</div></header><main id="app"><div class="card">Chargement…</div></main><script>const token=new URLSearchParams(location.search).get('token');function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}async function load(){if(!token){app.innerHTML='<div class="card"><h2>Carte introuvable</h2></div>';return}const r=await fetch('/api/public/customer/token/'+encodeURIComponent(token));const d=await r.json();if(!r.ok){app.innerHTML='<div class="card"><h2>'+esc(d.error)+'</h2></div>';return}const next=d.rewards.filter(x=>x.points_cost>d.customer.points).sort((a,b)=>a.points_cost-b.points_cost)[0];app.innerHTML=`<div class="loyalty"><div class="brand">esprit mode</div><h1>${esc(d.customer.first_name)} ${esc(d.customer.last_name)}</h1><div class="points">${d.customer.points}</div><div class="points-label">points disponibles</div>${next?`<div class="next">Encore <b>${next.points_cost-d.customer.points} points</b> pour ${esc(next.name)}</div>`:'<div class="next">Vous avez atteint toutes les récompenses disponibles.</div>'}<img class="qr" src="/api/public/qr/${encodeURIComponent(token)}" alt="QR code personnel"></div><div class="card"><h2>Mes récompenses</h2>${d.rewards.map(x=>`<div class="row"><span>${esc(x.name)}</span><b>${x.points_cost} points</b></div>`).join('')||'<p class="muted">Aucune récompense actuellement.</p>'}</div><div class="card"><h2>Mes achats</h2>${d.history.map(x=>`<div class="row"><span>${new Date(x.created_at).toLocaleDateString('fr-FR')}</span><span>${Number(x.amount).toFixed(2)} € · +${x.points} pts</span></div>`).join('')||'<p class="muted">Aucun achat enregistré.</p>'}</div><div class="card edit"><h2>Mes coordonnées</h2><input id="efn" value="${esc(d.customer.first_name)}" placeholder="Prénom"><input id="eln" value="${esc(d.customer.last_name)}" placeholder="Nom"><input id="eph" value="${esc(d.customer.phone)}" placeholder="Téléphone"><input id="eem" value="${esc(d.customer.email)}" placeholder="E-mail"><input id="ebd" type="date" value="${esc(d.customer.birth_date||'')}"><input id="ead" value="${esc(d.customer.address||'')}" placeholder="Adresse"><input id="epc" value="${esc(d.customer.postal_code||'')}" placeholder="Code postal"><input id="eci" value="${esc(d.customer.city||'')}" placeholder="Ville"><div class="consent"><label><input id="eme" type="checkbox" ${d.customer.marketing_email?'checked':''}> Offres par e-mail</label><label><input id="ems" type="checkbox" ${d.customer.marketing_sms?'checked':''}> Offres par SMS</label></div><button onclick="save()">Enregistrer mes coordonnées</button><div id="saved"></div></div><div class="card install"><h2>📲 Mon application Esprit Mode</h2><p>Ajoutez Esprit Mode à votre écran d'accueil pour retrouver votre carte rapidement.</p><button onclick="shareApp()">Partager ma carte</button><div id="installMsg" class="muted"></div></div>
-<div class="card social"><h2>Suivez Esprit Mode</h2><p>Retrouvez les nouveautés, les vidéos et les actualités de Michelle.</p><div class="social-grid"><div class="social-item"><img src="/api/public/social-qr/instagram" alt="QR code Instagram Esprit Mode"><strong>Instagram</strong><small>Scannez ou ouvrez le profil</small><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener">Ouvrir Instagram</a></div><div class="social-item"><img src="/api/public/social-qr/facebook" alt="QR code Facebook Esprit Mode"><strong>Facebook</strong><small>Scannez ou ouvrez la page</small><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener">Ouvrir Facebook</a></div></div></div>
-<div class="card"><h2>Nos boutiques</h2><div class="row"><span>47 avenue Georges Clemenceau<br>94700 Maisons-Alfort</span><span>☎ 06 62 55 24 87</span></div><div class="row"><span>59 avenue du Général de Gaulle<br>94700 Maisons-Alfort</span><span>☎ 06 62 55 24 87</span></div></div>`}async function shareApp(){const url=location.href;if(navigator.share){try{await navigator.share({title:'Ma carte Esprit Mode',text:'Ma carte de fidélité Esprit Mode',url})}catch(e){}}else{try{await navigator.clipboard.writeText(url);installMsg.textContent='Lien copié.'}catch(e){installMsg.textContent=url}}}
-async function save(){const r=await fetch('/api/public/customer/token/'+encodeURIComponent(token),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({first_name:efn.value,last_name:eln.value,phone:eph.value,email:eem.value,birth_date:ebd.value,address:ead.value,postal_code:epc.value,city:eci.value,marketing_email:eme.checked,marketing_sms:ems.checked})});const d=await r.json();saved.textContent=r.ok?'Coordonnées mises à jour.':(d.error||'Erreur');}load()</script></body></html>
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="stylesheet" href="style.css"><title>Ma carte — esprit mode</title>
+<style>
+.loyalty{background:linear-gradient(135deg,#4a555a 0%,#59656a 46%,#404b50 100%);color:#fff;border-radius:24px;padding:24px 20px;box-shadow:0 14px 34px #29323738;position:relative;overflow:hidden}
+.loyalty .b{letter-spacing:.16em;font-size:13px;color:#f0d3c8;text-transform:lowercase}
+.loyalty h1{font-family:Georgia,serif;font-weight:500;font-size:26px;margin:14px 0 6px}
+.pts{font-size:54px;font-weight:300;line-height:1}
+.bar{height:6px;background:#ffffff30;border-radius:3px;margin:14px 0 8px;overflow:hidden}.bar span{display:block;height:100%;background:#e7b9a8}
+.next{font-size:15px;color:#fff7f3}
+.qrwrap{text-align:center}
+.soc{display:grid;grid-template-columns:1fr 1fr;gap:10px}.soc a{display:block;text-align:center;text-decoration:none;background:var(--ink);color:#fff;border-radius:12px;padding:12px;font-weight:600}
+</style></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>ma carte de fidélité</small></span></header>
+<main class="narrow" id="app"><div class="card">Chargement…</div></main>
+<script src="app.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const token = params.get('token');
+let D = null;
+async function load() {
+  if (!token) { $('app').innerHTML = '<div class="card"><h2>Carte introuvable</h2><p>Ouvrez le lien personnel de votre carte, ou demandez-le en boutique.</p></div>'; return; }
+  try { D = await api('/api/public/customer/token/' + encodeURIComponent(token)); }
+  catch (e) { $('app').innerHTML = `<div class="card"><h2>${esc(e.message)}</h2><p>Demandez votre lien en boutique.</p></div>`; return; }
+  render();
+}
+function render() {
+  const c = D.customer, R = D.rule, left = Math.max(0, R.threshold - c.points), pct = Math.min(100, Math.round(c.points / R.threshold * 100));
+  const active = D.vouchers.filter(v => v.status === 'active');
+  $('app').innerHTML = `
+  ${params.get('bienvenue') ? `<div class="ok" style="margin:10px 0"><b>Bienvenue chez esprit mode !</b> Votre carte est créée. <b>Ajoutez cette page à l'écran d'accueil</b> de votre téléphone pour la retrouver (instructions plus bas).</div>` : ''}
+  <div class="loyalty"><div class="b">esprit mode</div><h1>${esc(c.first_name)} ${esc(c.last_name)}</h1>
+    <div class="pts">${c.points}</div><div>points</div>
+    <div class="bar"><span style="width:${pct}%"></span></div>
+    <div class="next">${left > 0 ? `Encore <b>${left} points</b> pour votre bon d'achat de ${euros0(R.voucher_value)}.` : `Carte pleine : votre bon d'achat de ${euros0(R.voucher_value)} est prêt.`}</div></div>
+  ${R.threshold === 300 ? `<div class="card"><h2>Ma carte à tampons</h2>${stampGrid(c.points, 300)}<p class="small muted">Comme la carte papier : 300 € d'achats = un bon d'achat de ${euros0(R.voucher_value)}, valable ${R.validity_days >= 365 ? 'un an' : R.validity_days + ' jours'}.</p></div>` : ''}
+  <div class="card"><h2>Mes récompenses</h2>
+    ${active.map(v => `<div class="item"><div><div class="name">Bon d'achat de ${euros0(v.value)}</div><div class="small muted">Valable jusqu'au ${fdate(v.expires_at)}</div></div><span class="tag ok">À utiliser en boutique</span></div>`).join('')}
+    ${!active.length ? `<p class="muted">Votre prochain bon : ${euros0(R.voucher_value)} à ${R.threshold} points (encore ${left}).</p>` : ''}
+    ${D.vouchers.filter(v => v.status !== 'active').map(v => `<div class="item small"><span>Bon de ${euros0(v.value)}</span><span class="muted">${v.status === 'used' ? 'utilisé le ' + fdate(v.used_at) : v.status === 'expired' ? 'expiré le ' + fdate(v.expires_at) : 'annulé'}</span></div>`).join('')}
+    ${(D.redemptions || []).map(r => `<div class="item small"><span>Récompense de ${euros0(r.value)}</span><span class="muted">utilisée le ${fdate(r.created_at)}</span></div>`).join('')}
+    ${R.conditions ? `<p class="small muted">${esc(R.conditions)}</p>` : ''}</div>
+  <div class="card qrwrap"><h2>Mon QR code</h2><img class="qr" src="/api/public/qr/${encodeURIComponent(token)}" alt="QR code de ma carte"><p class="small muted">En caisse, donnez votre numéro de téléphone ou montrez ce QR code.</p></div>
+  <div class="card"><h2>Mes achats</h2>${D.history.map(x => `<div class="item"><span>${fdate(x.created_at)}</span><span>${money(x.amount)} · +${x.points} pts</span></div>`).join('') || '<p class="muted">Aucun achat enregistré.</p>'}</div>
+  <details class="card"><summary><b>Ajouter ma carte à l'écran d'accueil</b></summary>
+    <p><b>iPhone :</b> dans Safari, touchez Partager (carré avec une flèche) puis « Sur l'écran d'accueil ».</p>
+    <p><b>Android :</b> dans Chrome, touchez ⋮ puis « Ajouter à l'écran d'accueil ».</p>
+    <p class="small muted">Ce lien est personnel : ne le partagez pas.</p></details>
+  <form class="card" id="edit" novalidate><h2>Mes coordonnées</h2>
+    <div class="row"><input id="efn" value="${esc(c.first_name)}" placeholder="Prénom"><input id="eln" value="${esc(c.last_name)}" placeholder="Nom"></div>
+    <input id="eph" type="tel" value="${esc(fmtPhone(c.phone))}" placeholder="Téléphone"><input id="eem" type="email" value="${esc(c.email)}" placeholder="E-mail">
+    <label class="field">Date de naissance<input id="ebd" type="date" value="${esc(c.birth_date || '')}"></label>
+    <input id="ead" value="${esc(c.address || '')}" placeholder="Adresse"><div class="row"><input id="epc" value="${esc(c.postal_code || '')}" placeholder="Code postal"><input id="eci" value="${esc(c.city || '')}" placeholder="Ville"></div>
+    <label class="check"><input id="eme" type="checkbox" ${c.marketing_email ? 'checked' : ''}> <span>Je souhaite recevoir les offres par e-mail</span></label>
+    <label class="check"><input id="ems" type="checkbox" ${c.marketing_sms ? 'checked' : ''}> <span>Je souhaite recevoir les offres par SMS</span></label>
+    <button id="saveBtn">Enregistrer mes coordonnées</button><div id="saved"></div></form>
+  <div class="card"><h2>Mes données</h2>
+    ${c.deletion_requested ? '<p class="warn">Votre demande de suppression a été transmise à la boutique.</p>' : `<div id="delZone"><button class="danger" id="delAsk">Demander la suppression de mon compte</button></div>`}
+    <p class="small muted"><a href="/#confidentialite">Politique de confidentialité</a></p></div>
+  <div class="card"><h2>Partager esprit mode</h2><p>Faites découvrir la carte de fidélité à vos amies.</p><button id="shareBtn">Partager l'application</button><div id="shareMsg" class="small muted"></div></div>
+  <div class="card"><h2>Suivez esprit mode</h2><p class="muted">Les nouveautés et les vidéos de Michelle.</p><div class="soc">
+    <div style="text-align:center"><img class="qr" style="width:120px;height:120px" src="/api/public/social-qr/instagram" alt="QR code Instagram"><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener">Instagram</a></div>
+    <div style="text-align:center"><img class="qr" style="width:120px;height:120px" src="/api/public/social-qr/facebook" alt="QR code Facebook"><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener">Facebook</a></div></div></div>
+  <div class="card"><h2>Nos boutiques</h2><p><b>47 avenue Georges Clemenceau</b>, 94700 Maisons-Alfort</p><p><b>59 avenue du Général de Gaulle</b>, 94700 Maisons-Alfort</p><p>☎ 06 62 55 24 87</p></div>`;
+  $('edit').addEventListener('submit', save);
+  const del = $('delAsk'); if (del) del.addEventListener('click', askDelete);
+  $('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));
+}
+async function save(e) {
+  e.preventDefault(); $('saveBtn').disabled = true;
+  try {
+    await api('/api/public/customer/token/' + encodeURIComponent(token), { method: 'PUT', body: { first_name: $('efn').value, last_name: $('eln').value, phone: $('eph').value, email: $('eem').value,
+      birth_date: $('ebd').value, address: $('ead').value, postal_code: $('epc').value, city: $('eci').value, marketing_email: $('eme').checked, marketing_sms: $('ems').checked } });
+    $('saved').className = 'ok'; $('saved').textContent = 'Coordonnées mises à jour.';
+  } catch (err) { $('saved').className = 'err'; $('saved').textContent = err.message; }
+  $('saveBtn').disabled = false;
+}
+function askDelete() {
+  $('delZone').innerHTML = `<p class="warn">Votre carte, vos points et vos bons seront supprimés. Confirmez-vous ?</p><div class="row"><button class="danger" id="delYes">Oui, supprimer mon compte</button><button class="secondary" id="delNo">Annuler</button></div>`;
+  $('delNo').addEventListener('click', render);
+  $('delYes').addEventListener('click', async () => { try { await api('/api/public/customer/token/' + encodeURIComponent(token) + '/delete-request', { method: 'POST' }); await load(); } catch (e) { toast(e.message, true); } });
+}
+load();
+</script>
+</body></html>

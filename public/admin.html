@@ -1,9 +1,117 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157"><link rel="manifest" href="manifest.json"><title>Esprit Mode — Back-office Élie</title><style>:root{--ink:#465157;--cream:#f7f4ef;--line:#e7e1d8;--muted:#706b64}*{box-sizing:border-box}body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:var(--cream);color:#222}header{background:linear-gradient(135deg,#465157,#586267 55%,#3e494e);color:#fff;padding:18px 20px}.brand{letter-spacing:.08em}main{max-width:1100px;margin:auto;padding:16px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.card{background:#fff;padding:18px;border-radius:18px;margin:12px 0;border:1px solid var(--line);box-shadow:0 3px 15px #0001}.stat{font-size:28px;font-weight:800;margin-top:5px}.label{color:var(--muted);font-size:13px}.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.tabs button{background:#ddd;color:#222}.tabs button.active{background:var(--ink);color:#fff}button,input,select{font:inherit;padding:10px;border-radius:10px;border:1px solid #ccc;margin:4px}button{background:var(--ink);color:#fff;cursor:pointer}.wide{width:100%}.hidden{display:none}table{width:100%;border-collapse:collapse}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:left}.muted{color:var(--muted)}.settings{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.success{color:#187a3d}.error{color:#a11}</style></head><body><header><span class="brand"><strong>esprit mode</strong> — 🔐 Back-office Élie</span></header><main>
-<div class="grid"><div class="card">Clientes<div id="customers" class="stat">—</div><div class="label">total</div></div><div class="card">Nouvelles clientes<div id="newmonth" class="stat">—</div><div class="label">ce mois</div></div><div class="card">CA du jour<div id="today" class="stat">—</div></div><div class="card">CA du mois<div id="month" class="stat">—</div></div><div class="card">Panier moyen<div id="avg" class="stat">—</div></div><div class="card">Points distribués<div id="dist" class="stat">—</div></div></div>
-<div class="card"><b>Fidélité</b> — <span id="near">—</span> clientes proches d'une récompense · <span id="used">—</span> récompenses utilisées</div>
-<div class="tabs"><button id="bclients" onclick="show('clients')">Clientes</button><button id="brewards" onclick="show('rewards')">Récompenses</button><button id="busers" onclick="show('users')">Utilisateurs</button><button id="bsettings" onclick="show('settings')">Paramètres</button></div>
-<section id="clients"><div class="card"><h2>Clientes</h2><input id="q" class="wide" placeholder="Nom, prénom, téléphone, e-mail" oninput="search()"><div id="list"></div></div><div class="card"><h2>Export</h2><button onclick="location.href='/api/export.csv'">Exporter les clientes CSV</button></div></section>
-<section id="rewards" class="hidden"><div class="card"><h2>Récompenses</h2><div id="rewardList"></div><input id="rn" placeholder="Nom de la récompense"><input id="rp" type="number" placeholder="Points"><input id="rv" type="number" step="0.01" placeholder="Valeur €"><button onclick="addReward()">Ajouter</button></div></section>
-<section id="users" class="hidden"><div class="card"><h2>Créer un accès</h2><input id="un" placeholder="Identifiant"><input id="up" type="password" placeholder="Mot de passe"><input id="ud" placeholder="Nom affiché"><select id="ur"><option value="manager">Michelle — Gestion commerciale</option><option value="seller">Vendeuse</option><option value="admin">Administrateur</option></select><button onclick="addUser()">Créer</button><div id="userList"></div></div></section>
-<section id="settings" class="hidden"><div class="card"><h2>Règle de fidélité</h2><p class="muted">Cette règle est modifiable sans changer le code de l'application.</p><div class="settings"><label>1 € dépensé = <input id="ppe" type="number" min="0.01" step="0.01"> point(s)</label><button onclick="saveSettings()">Enregistrer</button></div><div id="setmsg"></div></div></section>
-</main><script>const H=()=>({Authorization:localStorage.auth||''});async function api(u,o={}){o.headers={...(o.headers||{}),...H(),'Content-Type':'application/json'};const r=await fetch(u,o);if(r.status===401){location.href='/login.html';throw 0}return r}function money(v){return Number(v||0).toFixed(2)+' €'}async function dashboard(){const d=await(await api('/api/dashboard')).json();customers.textContent=d.customers;newmonth.textContent=d.new_month;today.textContent=money(d.ca_today);month.textContent=money(d.ca_month);avg.textContent=d.sales_month?money(d.ca_month/d.sales_month):'0.00 €';dist.textContent=d.points_distributed;near.textContent=d.near_reward;used.textContent=d.rewards_used}async function search(){const d=await(await api('/api/customers?q='+encodeURIComponent(q.value))).json();list.innerHTML='<table><tr><th>Cliente</th><th>Téléphone</th><th>E-mail</th><th>Points</th><th>Action</th></tr>'+d.map(c=>`<tr><td>${c.first_name} ${c.last_name}</td><td>${c.phone}</td><td>${c.email||'—'}</td><td>${c.points}</td><td><button onclick="purchase(${c.id},'${String(c.first_name).replaceAll("'","\\'")}')">Achat</button></td></tr>`).join('')+'</table>'}async function purchase(id,name){const amount=prompt('Montant de l’achat de '+name+' (€)');if(!amount)return;const r=await api('/api/purchases',{method:'POST',body:JSON.stringify({customer_id:id,amount})});const d=await r.json();alert(r.ok?'Achat enregistré — nouveau solde : '+d.points+' points':d.error);search();dashboard()}async function rewards(){const d=await(await api('/api/rewards')).json();rewardList.innerHTML=d.map(x=>`<p><b>${x.name}</b> — ${x.points_cost} points — ${Number(x.value_cents/100).toFixed(2)} €</p>`).join('')||'<p>Aucune récompense.</p>'}async function addReward(){const r=await api('/api/rewards',{method:'POST',body:JSON.stringify({name:rn.value,points_cost:rp.value,value_euros:rv.value})});const d=await r.json();if(!r.ok)alert(d.error);else{rn.value=rp.value=rv.value='';rewards()}}async function users(){const d=await(await api('/api/users')).json();userList.innerHTML=d.map(x=>`<p>${x.display_name} — <b>${x.role}</b> — ${x.username}</p>`).join('')}async function addUser(){const r=await api('/api/users',{method:'POST',body:JSON.stringify({username:un.value,password:up.value,display_name:ud.value,role:ur.value})});const d=await r.json();if(!r.ok)alert(d.error);else{alert('Accès créé');users()}}async function settings(){const d=await(await api('/api/settings')).json();ppe.value=d.points_per_euro}async function saveSettings(){const r=await api('/api/settings',{method:'POST',body:JSON.stringify({points_per_euro:ppe.value})});const d=await r.json();setmsg.className=r.ok?'success':'error';setmsg.textContent=r.ok?'Paramètre enregistré.':'Erreur : '+d.error}function show(s){for(const id of ['clients','rewards','users','settings'])document.getElementById(id).classList.toggle('hidden',id!==s);for(const b of [bclients,brewards,busers,bsettings])b.classList.remove('active');document.getElementById('b'+s).classList.add('active');if(s==='rewards')rewards();if(s==='users')users();if(s==='settings')settings()}dashboard();search();show('clients');</script></body></html>
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="manifest" href="manifest.json"><link rel="stylesheet" href="style.css"><title>Administration — esprit mode</title></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>administration</small></span><nav id="nav"></nav></header>
+<main>
+  <div id="dash" class="grid"></div>
+  <div class="card" id="fid"></div>
+  <div class="card hidden" id="delreq"></div>
+
+  <div class="card"><h2>Clientes</h2>
+    <input id="q" type="search" placeholder="Nom, prénom, téléphone, e-mail" autocomplete="off">
+    <div id="list"></div>
+    <h3>Exports</h3>
+    <div class="row"><button class="secondary small" id="expC">Exporter les clientes (CSV)</button><button class="secondary small" id="expP">Exporter les achats (CSV)</button></div>
+  </div>
+
+  <form class="card" id="rule" novalidate><h2>Règle de fidélité</h2>
+    <p class="small muted">Modifiable sans toucher au code. Les changements s'appliquent aux achats suivants.</p>
+    <div class="grid">
+      <label class="field">Points par euro<input id="ppe" type="number" min="0.01" step="0.01"></label>
+      <label class="field">Carte pleine à (points)<input id="th" type="number" min="10"></label>
+      <label class="field">Valeur du bon (€)<input id="val" type="number" min="1" step="0.01"></label>
+      <label class="field">Validité du bon (jours)<input id="days" type="number" min="1"></label>
+    </div>
+    <label class="field">Conditions affichées sur le bon<input id="cond" maxlength="300"></label>
+    <label class="check"><input type="checkbox" id="auto"> <span>Créer le bon automatiquement quand la carte est pleine</span></label>
+    <button class="small" id="ruleBtn">Enregistrer la règle</button><div id="ruleMsg"></div></form>
+
+  <div class="card"><h2>Équipe et accès</h2>
+    <div id="users"></div>
+    <h3>Créer un accès</h3>
+    <form id="newUser" class="row" novalidate>
+      <input id="un" placeholder="Identifiant (ex. michelle)" autocapitalize="none"><input id="ud" placeholder="Nom affiché">
+      <input id="up" type="text" placeholder="Mot de passe (8 caractères min.)" autocomplete="new-password">
+      <select id="ur"><option value="seller">Vendeuse — caisse uniquement</option><option value="manager">Gestion — clientes et communication</option><option value="admin">Administrateur — tout</option></select>
+      <button class="small auto" id="nuBtn">Créer</button></form>
+    <div id="nuMsg"></div>
+    <p class="small muted">Pour un compte « mot de passe à définir » : cliquez sur <b>Nouveau mot de passe</b> et communiquez-le à la personne. Ensuite, chacun peut le changer dans « Mon mot de passe ».</p>
+  </div>
+
+  <div class="card"><h2>Journal des actions sensibles</h2><div id="audit" class="small">Chargement…</div></div>
+</main>
+<script src="app.js"></script>
+<script>
+let timer = null;
+(async () => { if (!(await staffNav('admin'))) return; dashboard(); search(); settings(); users(); auditLog(); })();
+
+async function dashboard() {
+  try {
+    const d = await api('/api/dashboard');
+    const k = (v, l) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`;
+    $('dash').innerHTML = k(d.customers, 'clientes') + k(d.new_month, 'nouvelles ce mois') + k(money(d.ca_today), 'CA du jour') + k(money(d.ca_month), 'CA du mois') +
+      k(d.sales_month ? money(d.ca_month / d.sales_month) : '—', 'panier moyen du mois') + k(d.active_90, 'actives (90 jours)');
+    $('fid').innerHTML = `<h2>Fidélité</h2><div class="grid">${k(d.points_distributed, 'points distribués')}${k(d.vouchers_created, 'bons créés')}${k(d.vouchers_used, 'bons utilisés')}${k(d.vouchers_active, 'bons en cours')}${k(d.vouchers_expired, 'bons expirés')}${k(d.near_reward, 'proches de la carte pleine')}</div>`;
+    if (d.deletion_requests.length) {
+      $('delreq').classList.remove('hidden');
+      $('delreq').innerHTML = `<h2>Demandes de suppression (RGPD)</h2>` + d.deletion_requests.map(r => `<div class="item"><div><b>${esc(r.name)}</b> <span class="small muted">demandée le ${fdate(r.at)}</span></div><button class="small danger" data-del="${r.id}" data-name="${esc(r.name)}">Supprimer définitivement</button></div>`).join('');
+    } else $('delreq').classList.add('hidden');
+  } catch (e) { toast(e.message, true); }
+}
+$('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 200); });
+async function search() {
+  try {
+    const d = await api('/api/customers?q=' + encodeURIComponent($('q').value.trim()));
+    $('list').innerHTML = `<div class="tablewrap"><table><tr><th>Cliente</th><th>Téléphone</th><th>E-mail</th><th>Points</th><th></th></tr>` +
+      d.map(c => `<tr><td>${esc(c.first_name)} ${esc(c.last_name)}${c.deletion_requested ? ' <span class="tag bad">suppression demandée</span>' : ''}</td><td>${esc(fmtPhone(c.phone))}</td><td>${esc(c.email || '—')}</td><td>${c.points}${c.vouchers ? ' <span class="tag ok">bon</span>' : ''}</td>
+        <td><a href="/boutique.html?c=${c.id}" class="small">fiche</a> <button class="small danger" data-del="${c.id}" data-name="${esc(c.first_name + ' ' + c.last_name)}">Supprimer</button></td></tr>`).join('') + '</table></div>';
+  } catch (e) { $('list').textContent = e.message; }
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-del]'); if (!b) return;
+  if (!confirm('Supprimer définitivement ' + b.dataset.name + ' ? Ses achats restent dans les statistiques, de façon anonyme. Action irréversible.')) return;
+  try { await api('/api/customers/' + b.dataset.del, { method: 'DELETE' }); toast('Fiche supprimée'); search(); dashboard(); auditLog(); } catch (err) { toast(err.message, true); }
+});
+$('expC').addEventListener('click', () => download('/api/export/customers.csv', 'esprit-mode-clientes.csv').catch(e => toast(e.message, true)));
+$('expP').addEventListener('click', () => download('/api/export/purchases.csv', 'esprit-mode-achats.csv').catch(e => toast(e.message, true)));
+
+async function settings() {
+  try { const s = await api('/api/settings'); $('ppe').value = s.points_per_euro; $('th').value = s.threshold; $('val').value = s.voucher_value; $('days').value = s.voucher_validity_days; $('auto').checked = !!s.auto_voucher; $('cond').value = s.voucher_conditions || ''; } catch (e) {}
+}
+$('rule').addEventListener('submit', async e => {
+  e.preventDefault();
+  try { await api('/api/settings', { method: 'POST', body: { points_per_euro: $('ppe').value, threshold: $('th').value, voucher_value: $('val').value, voucher_validity_days: $('days').value, auto_voucher: $('auto').checked, voucher_conditions: $('cond').value } });
+    $('ruleMsg').className = 'ok'; $('ruleMsg').textContent = 'Règle enregistrée.'; }
+  catch (err) { $('ruleMsg').className = 'err'; $('ruleMsg').textContent = err.message; }
+});
+
+const ROLE = { admin: 'Administrateur', manager: 'Gestion', seller: 'Vendeuse' };
+async function users() {
+  try {
+    const d = await api('/api/users');
+    $('users').innerHTML = d.map(u => `<div class="item"><div><b>${esc(u.display_name)}</b> <span class="small muted">${esc(u.username)} · ${ROLE[u.role] || esc(u.role)}</span>
+      ${!u.active ? ' <span class="tag bad">désactivé</span>' : ''}${u.needs_reset ? ' <span class="tag bad">mot de passe à définir</span>' : u.weak ? ' <span class="tag bad">mot de passe trop simple</span>' : ''}</div>
+      ${u.protected ? '<span class="small muted">compte principal</span>' : `<div><button class="small secondary" data-pw="${u.id}">Nouveau mot de passe</button><button class="small secondary" data-toggle="${u.id}" data-active="${u.active ? 1 : 0}">${u.active ? 'Désactiver' : 'Réactiver'}</button><button class="small danger" data-udel="${u.id}">Supprimer</button></div>`}</div>`).join('');
+  } catch (e) { $('users').textContent = e.message; }
+}
+$('users').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.pw) { const p = prompt('Nouveau mot de passe (8 caractères minimum) :'); if (!p) return; await api('/api/users/' + b.dataset.pw, { method: 'PUT', body: { password: p } }); toast('Mot de passe changé'); }
+    else if (b.dataset.toggle) { await api('/api/users/' + b.dataset.toggle, { method: 'PUT', body: { active: b.dataset.active !== '1' } }); }
+    else if (b.dataset.udel) { if (!confirm('Supprimer cet accès ?')) return; await api('/api/users/' + b.dataset.udel, { method: 'DELETE' }); }
+    users();
+  } catch (err) { toast(err.message, true); }
+});
+$('newUser').addEventListener('submit', async e => {
+  e.preventDefault();
+  try { await api('/api/users', { method: 'POST', body: { username: $('un').value, password: $('up').value, display_name: $('ud').value, role: $('ur').value } });
+    $('nuMsg').className = 'ok'; $('nuMsg').textContent = 'Accès créé. Communiquez l\'identifiant et le mot de passe à la personne.'; ['un', 'up', 'ud'].forEach(i => $(i).value = ''); users(); }
+  catch (err) { $('nuMsg').className = 'err'; $('nuMsg').textContent = err.message; }
+});
+async function auditLog() {
+  try { const d = await api('/api/audit'); $('audit').innerHTML = d.slice(0, 50).map(a => `<div>${fdt(a.at)} · ${esc(a.by)} · ${esc(a.action)} · ${esc(a.detail)}</div>`).join('') || 'Rien pour le moment.'; } catch (e) {}
+}
+</script>
+</body></html>

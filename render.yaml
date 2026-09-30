@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: esprit-mode-test
+    name: esprit-mode
     runtime: node
     plan: free
     buildCommand: npm install
@@ -9,9 +9,11 @@ services:
     envVars:
       - key: ADMIN_PASSWORD
         sync: false
-      - key: PUBLIC_URL
-        sync: false
       - key: DATABASE_URL
         sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: TZ
+        value: Europe/Paris
       - key: NODE_VERSION
         value: 22

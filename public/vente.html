@@ -1,57 +1,130 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157"><link rel="manifest" href="manifest.json"><title>Esprit Mode — Vente</title><style>
-body{font-family:system-ui;margin:0;background:#f7f3ee;color:#222}header{background:linear-gradient(135deg,#465157,#586267 55%,#3e494e);color:#fff;padding:20px}main{max-width:700px;margin:auto;padding:18px}.card{background:#fff;padding:18px;border-radius:18px;margin:12px 0;box-shadow:0 2px 12px #0001}input,button{font:inherit;padding:13px;border-radius:12px;border:1px solid #ccc;margin:4px}input{width:calc(100% - 8px);box-sizing:border-box}button{background:linear-gradient(135deg,#465157,#586267 55%,#3e494e);color:#fff;cursor:pointer}.client{padding:14px;border:1px solid #ddd;border-radius:14px;margin:8px 0}.small{color:#777}.hint{padding:10px 4px;color:#666}.hidden{display:none}.client-name{font-size:18px;font-weight:700}.client-main{display:flex;justify-content:space-between;gap:12px;align-items:center}.client-info{min-width:0}.badge{font-weight:600}.secondary{background:#fff;color:#465157}.newbox{border-top:1px solid #eee;margin-top:16px;padding-top:16px}.success{color:#187a3d}.error{color:#a11}.consent{font-size:13px;color:#555;display:block;padding:8px 4px}.consent input{width:auto}
-</style></head><body><header><strong>esprit mode</strong> — 🛍️ Vente</header><main>
-<div class="card"><h2>Rechercher une cliente</h2><input id="q" placeholder="Téléphone, e-mail ou nom" autocomplete="off" oninput="find()"><div id="hint" class="hint">Saisissez le téléphone, l’e-mail ou le nom de la cliente.</div><div id="results"></div>
-<div id="newChoice" class="newbox hidden"><div class="small">Aucune cliente exacte trouvée.</div><button class="secondary" onclick="showNewClient()">➕ Créer une nouvelle cliente</button></div></div>
-<div id="newCard" class="card hidden"><h2>Nouvelle cliente</h2><p class="small">Pour créer une carte en boutique, les 4 informations sont obligatoires.</p><input id="nf" placeholder="Prénom"><input id="nl" placeholder="Nom"><input id="np" placeholder="Téléphone"><input id="ne" type="email" placeholder="E-mail"><label class="consent"><input id="nt" type="checkbox"> La cliente accepte les conditions et la politique de confidentialité *</label><button onclick="createClient()">Créer la carte</button><div id="msg" class="small"></div></div>
-</main><script>
-const H=()=>({Authorization:localStorage.auth||''});
-let timer;
-function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
-async function find(){
-  clearTimeout(timer); const term=q.value.trim();
-  timer=setTimeout(async()=>{
-    results.innerHTML=''; newChoice.classList.add('hidden'); newCard.classList.add('hidden');
-    if(!term){hint.textContent='Saisissez le téléphone, l’e-mail ou le nom de la cliente.';return;}
-    hint.textContent='Recherche en cours…';
-    const d=await(await fetch('/api/customers?q='+encodeURIComponent(term),{headers:H()})).json();
-    const normalized=term.toLowerCase().replace(/\s+/g,'');
-    const exact=d.filter(c=>{
-      const phone=String(c.phone||'').toLowerCase().replace(/\s+/g,'');
-      const email=String(c.email||'').toLowerCase();
-      const name=(String(c.first_name||'')+' '+String(c.last_name||'')).toLowerCase().trim();
-      return phone===normalized || email===term.toLowerCase() || name===term.toLowerCase();
-    });
-    const list=exact.length?exact:d;
-    if(exact.length===1){
-      hint.textContent='Cliente trouvée';
-      renderClients(exact);
-      return;
-    }
-    if(!list.length){
-      hint.textContent='Aucune cliente trouvée.';
-      newChoice.classList.remove('hidden');
-      return;
-    }
-    hint.textContent=list.length===1?'1 cliente trouvée':'Plusieurs clientes correspondent à la recherche :';
-    renderClients(list);
-  },180);
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="manifest" href="manifest.json"><link rel="stylesheet" href="style.css"><title>Caisse — esprit mode</title></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>caisse</small></span><nav id="nav"></nav></header>
+<main class="narrow">
+  <div class="card" id="searchCard">
+    <h2>Rechercher une cliente</h2>
+    <input id="q" type="search" placeholder="Téléphone, nom ou e-mail" autocomplete="off" autofocus>
+    <div id="hint" class="small muted">Tapez les premiers chiffres du téléphone ou le nom.</div>
+    <div id="results"></div>
+    <button class="secondary" id="newBtn" style="margin-top:10px">+ Nouvelle cliente</button>
+  </div>
+
+  <div class="card hidden" id="clientCard"></div>
+
+  <form class="card hidden" id="newCard" novalidate>
+    <h2>Nouvelle cliente</h2>
+    <div class="row"><input id="nf" placeholder="Prénom *"><input id="nl" placeholder="Nom *"></div>
+    <input id="np" type="tel" inputmode="tel" placeholder="Téléphone *"><input id="ne" type="email" placeholder="E-mail *">
+    <div id="dupWarn"></div>
+    <label class="check"><input id="nt" type="checkbox"> <span>La cliente accepte les conditions et la politique de confidentialité *</span></label>
+    <label class="check"><input id="nme" type="checkbox"> <span>La cliente souhaite recevoir les offres par e-mail</span></label>
+    <label class="check"><input id="nms" type="checkbox"> <span>La cliente souhaite recevoir les offres par SMS</span></label>
+    <p class="small muted">Ne cochez les offres que si la cliente l'a demandé.</p>
+    <div class="row"><button id="createBtn">Créer la carte</button><button type="button" class="secondary" id="cancelNew">Annuler</button></div>
+    <div id="msg"></div>
+  </form>
+</main>
+<script src="app.js"></script>
+<script>
+let SET = null, CUR = null, timer = null, lastList = [];
+(async () => { if (!(await staffNav('vente'))) return; try { SET = await api('/api/settings'); } catch (e) { toast(e.message, true); } })();
+
+$('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(find, 200); });
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); if (lastList.length === 1) openClient(lastList[0].id); } });
+async function find() {
+  const term = $('q').value.trim(); $('results').innerHTML = '';
+  if (!term) { $('hint').textContent = 'Tapez les premiers chiffres du téléphone ou le nom.'; lastList = []; return; }
+  $('hint').textContent = 'Recherche…';
+  try {
+    lastList = await api('/api/customers?q=' + encodeURIComponent(term));
+    const digits = term.replace(/\D/g, ''), low = term.toLowerCase();
+    const exact = lastList.filter(c => (digits.length >= 10 && c.phone === digits) || (c.email && c.email === low) || `${c.first_name} ${c.last_name}`.toLowerCase() === low);
+    if (exact.length) lastList = exact;
+    $('hint').textContent = lastList.length ? (lastList.length === 1 ? '1 cliente' : lastList.length + ' clientes') : 'Aucune cliente trouvée.';
+    $('results').innerHTML = lastList.map(c => `<div class="item"><div><div class="name">${esc(c.first_name)} ${esc(c.last_name)}</div>
+      <div class="small muted">${esc(fmtPhone(c.phone))} · <b>${c.points} points</b>${c.vouchers ? ' · <span class="tag ok">bon à utiliser</span>' : ''}${c.deletion_requested ? ' <span class="tag bad">suppression demandée</span>' : ''}</div></div>
+      <button class="small" data-open="${c.id}">Choisir</button></div>`).join('');
+  } catch (e) { $('hint').textContent = e.message; }
 }
-function renderClients(list){
-  results.innerHTML=list.map(c=>`<div class="client"><div class="client-main"><div class="client-info"><div class="client-name">${esc(c.first_name)} ${esc(c.last_name)}</div><div class="small">${esc(c.phone)} · <span class="badge">${c.points} points</span></div></div><button onclick="buy(${c.id},'${esc(c.first_name)}')">Enregistrer un achat</button></div></div>`).join('');
+$('results').addEventListener('click', e => { const b = e.target.closest('[data-open]'); if (b) openClient(Number(b.dataset.open)); });
+
+async function openClient(id) {
+  try { CUR = await api('/api/customers/' + id + '/profile'); } catch (e) { toast(e.message, true); return; }
+  $('newCard').classList.add('hidden'); showClient();
 }
-function showNewClient(){newCard.classList.remove('hidden');nf.focus();}
-async function createClient(){
-  const first_name=nf.value.trim(),last_name=nl.value.trim(),phone=np.value.trim(),email=ne.value.trim();
-  if(!first_name||!last_name||!phone||!email){msg.className='small error';msg.textContent='Prénom, nom, téléphone et e-mail sont obligatoires.';return} if(!nt.checked){msg.className='small error';msg.textContent='La cliente doit accepter les conditions et la politique de confidentialité.';return}
-  const r=await fetch('/api/customers',{method:'POST',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({first_name,last_name,phone,email,terms_accepted:true})});
-  const d=await r.json(); if(!r.ok){msg.className='small error';msg.textContent=d.error||'Impossible de créer la carte.';return}
-  msg.className='small success';msg.textContent='Carte créée pour '+d.first_name+' '+d.last_name+'.';
-  nf.value='';nl.value='';np.value='';ne.value='';nt.checked=false;q.value=d.phone;find();
+function preview() {
+  const a = Number(String($('amount')?.value || '').replace(',', '.'));
+  const pts = a > 0 ? Math.floor(a * SET.points_per_euro) : 0, tot = CUR.customer.points + pts;
+  $('prev').innerHTML = `<div class="kpi"><b>+${pts}</b><span>points gagnés</span></div><div class="kpi"><b>${tot >= SET.threshold && SET.auto_voucher ? tot % SET.threshold : tot}</b><span>nouveau solde</span></div>` +
+    (tot >= SET.threshold && SET.auto_voucher ? `<div class="kpi"><b>${euros0(SET.voucher_value * Math.floor(tot / SET.threshold))}</b><span>bon créé : carte pleine</span></div>` : '');
 }
-async function buy(id,name){
-  const amount=prompt('Montant de l’achat de '+name+' (€)'); if(!amount)return;
-  const r=await fetch('/api/purchases',{method:'POST',headers:{...H(),'Content-Type':'application/json'},body:JSON.stringify({customer_id:id,amount})});
-  const d=await r.json(); alert(r.ok?'Achat enregistré. Nouveau solde : '+d.points+' points':d.error); find();
+function showClient() {
+  const c = CUR.customer, act = CUR.vouchers.filter(v => v.status === 'active');
+  $('clientCard').classList.remove('hidden');
+  $('clientCard').innerHTML = `
+    <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(c.first_name)} ${esc(c.last_name)}</h2><div class="muted small">${esc(fmtPhone(c.phone))} · ${c.points} points · encore ${CUR.stats.remaining} pour le bon</div></div>
+      <button type="button" class="small secondary auto" id="closeClient">Changer</button></div>
+    ${c.deletion_requested_at ? '<p class="warn">Cette cliente a demandé la suppression de son compte.</p>' : ''}
+    <form id="buy" novalidate>
+      <label class="field">Montant payé (€)<input id="amount" class="big-amount" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
+      ${act.length ? '<p class="field">Bons d\'achat disponibles</p>' + act.map(v => `<label class="check"><input type="checkbox" data-v="${v.id}"> <span>Utiliser le bon de ${euros0(v.value)} (jusqu'au ${fdate(v.expires_at)})</span></label>`).join('') : ''}
+      <div class="grid" id="prev"></div>
+      <button id="buyBtn" style="margin-top:10px">Valider l'achat</button><div id="buyMsg"></div>
+    </form>
+    ${stampGrid(c.points, SET ? SET.threshold : 300)}
+    <details><summary class="small"><b>Reprendre une carte papier</b></summary>
+      <p class="small muted">Saisissez le total tamponné sur sa carte papier (en euros).</p>
+      <div class="row"><input id="paperAmt" inputmode="numeric" placeholder="ex. 180"><button type="button" class="small auto" id="paperBtn">Ajouter les points</button></div></details>
+    <details><summary class="small"><b>Donner le lien de sa carte</b></summary>
+      <p class="small muted">La cliente scanne ce QR code avec l'appareil photo de son téléphone.</p>
+      <img class="qr" alt="QR code de la carte" src="/api/public/qr/${encodeURIComponent(CUR.card_url.split('token=')[1] || '')}"></details>`;
+  $('amount').addEventListener('input', preview); preview(); $('amount').focus();
+  $('buy').addEventListener('submit', buy);
+  $('closeClient').addEventListener('click', () => { $('clientCard').classList.add('hidden'); CUR = null; $('q').focus(); });
+  $('paperBtn').addEventListener('click', paper);
 }
-</script></body></html>
+async function buy(e) {
+  e.preventDefault(); const b = $('buyBtn'); b.disabled = true; $('buyMsg').className = ''; $('buyMsg').textContent = '';
+  try {
+    const voucher_ids = [...document.querySelectorAll('[data-v]')].filter(x => x.checked).map(x => Number(x.dataset.v));
+    const r = await api('/api/purchases', { method: 'POST', body: { customer_id: CUR.customer.id, amount: $('amount').value, voucher_ids } });
+    $('clientCard').innerHTML = `<div class="done"><p class="muted">${esc(r.first_name)} ${esc(r.last_name)}</p><h2>Achat enregistré</h2>
+      <div class="plus">+${r.added} points</div><p>Nouveau solde : <b>${r.points} points</b></p>
+      ${r.vouchers_used.length ? `<p class="ok">Bon de ${euros0(r.vouchers_used.reduce((n, v) => n + v.value, 0))} utilisé.</p>` : ''}
+      ${r.vouchers_created.length ? `<p class="ok" style="font-size:18px"><b>Carte pleine !</b> Bon d'achat de ${euros0(r.vouchers_created.reduce((n, v) => n + v.value, 0))} créé, valable jusqu'au ${fdate(r.vouchers_created[0].expires_at)}.</p>` : ''}
+      <button id="nextBtn">Nouvel achat</button></div>`;
+    $('nextBtn').addEventListener('click', () => { $('clientCard').classList.add('hidden'); $('q').value = ''; $('results').innerHTML = ''; $('q').focus(); });
+  } catch (err) { $('buyMsg').className = 'err'; $('buyMsg').textContent = err.message; b.disabled = false; }
+}
+async function paper() {
+  $('paperBtn').disabled = true;
+  try {
+    const r = await api('/api/customers/' + CUR.customer.id + '/paper', { method: 'POST', body: { amount: $('paperAmt').value } });
+    toast(r.vouchers_created.length ? 'Carte papier reprise : carte pleine, bon créé' : 'Carte papier reprise');
+    await openClient(CUR.customer.id);
+  } catch (e) { toast(e.message, true); $('paperBtn').disabled = false; }
+}
+$('newBtn').addEventListener('click', () => { $('newCard').classList.remove('hidden'); $('clientCard').classList.add('hidden'); if (/^[\d\s+]+$/.test($('q').value)) $('np').value = $('q').value; $('nf').focus(); });
+$('cancelNew').addEventListener('click', () => $('newCard').classList.add('hidden'));
+$('np').addEventListener('input', async () => {
+  const d = $('np').value.replace(/\D/g, ''); $('dupWarn').innerHTML = '';
+  if (d.length < 10) return;
+  try { const l = await api('/api/customers?q=' + encodeURIComponent(d)); const ex = l.find(c => c.phone === d);
+    if (ex) { $('dupWarn').innerHTML = `<p class="warn">Ce numéro appartient déjà à <b>${esc(ex.first_name)} ${esc(ex.last_name)}</b>. <button type="button" class="small" data-open2="${ex.id}">Ouvrir sa carte</button></p>`; } } catch (e) {}
+});
+$('dupWarn').addEventListener('click', e => { const b = e.target.closest('[data-open2]'); if (b) openClient(Number(b.dataset.open2)); });
+$('newCard').addEventListener('submit', async e => {
+  e.preventDefault(); const b = $('createBtn'); b.disabled = true; $('msg').className = ''; $('msg').textContent = '';
+  try {
+    const c = await api('/api/customers', { method: 'POST', body: { first_name: $('nf').value, last_name: $('nl').value, phone: $('np').value, email: $('ne').value,
+      terms_accepted: $('nt').checked, marketing_email: $('nme').checked, marketing_sms: $('nms').checked } });
+    ['nf', 'nl', 'np', 'ne'].forEach(i => $(i).value = ''); ['nt', 'nme', 'nms'].forEach(i => $(i).checked = false);
+    toast('Carte créée'); await openClient(c.id);
+  } catch (err) { $('msg').className = 'err'; $('msg').textContent = err.message; }
+  b.disabled = false;
+});
+</script>
+</body></html>
