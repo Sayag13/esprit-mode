@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.2.2';
+const VERSION = '1.2.3';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -746,6 +746,23 @@ app.get('/api/export/gifts.csv', auth, adminOnly, (req, res) => {
     ...db.gift_cards.map(g => [GIFT_KINDS[g.kind], giftNumber(g), g.code, (g.amount_cents / 100).toFixed(2).replace('.', ','), (g.balance_cents / 100).toFixed(2).replace('.', ','),
       { active: 'en cours', used: 'utilisé', expired: 'expiré', cancelled: 'annulé' }[giftStatus(g)], g.recipient, g.kind === 'avoir' ? g.note : g.from_name, g.created_at, g.created_by, g.expires_at,
       (g.uses || []).map(u => `${u.at.slice(0, 10)} ${u.amount} €`).join(' | ')])]);
+});
+
+/* ---- Signature des chèques cadeaux : stockée uniquement dans la base (jamais dans GitHub) ---- */
+app.get('/api/admin/signature', auth, adminOnly, (req, res) => res.json({ has: !!(db.meta.signature && db.meta.signature.data), updated_at: db.meta.signature ? db.meta.signature.updated_at : null }));
+app.post('/api/admin/signature', auth, adminOnly, tx(req => {
+  const m = String((req.body || {}).data_url || '').match(/^data:image\/(png|jpeg);base64,([A-Za-z0-9+\/=]+)$/);
+  if (!m) bad('Image invalide (PNG ou JPEG).');
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length < 200 || buf.length > 400000) bad('Image trop lourde ou vide (maximum 400 Ko).');
+  db.meta.signature = { type: 'image/' + m[1], data: m[2], updated_at: nowIso() };
+  audit(req.user, 'signature_cheques', 'nouvelle signature');
+  return { has: true, updated_at: db.meta.signature.updated_at };
+}));
+app.delete('/api/admin/signature', auth, adminOnly, tx(req => { db.meta.signature = null; audit(req.user, 'signature_cheques', 'supprimée'); return { has: false }; }));
+app.get('/api/public/signature', (req, res) => {
+  const sg = db.meta.signature; if (!sg || !sg.data) return res.status(404).end();
+  res.set('Cache-Control', 'no-cache').type(sg.type).send(Buffer.from(sg.data, 'base64'));
 });
 
 /* ---- Options (Administration) ---- */

@@ -56,6 +56,12 @@
     <div class="row" style="margin-top:10px"><button class="small auto" id="optBtn">Enregistrer les options</button><button type="button" class="small secondary auto" id="runDaily">Lancer maintenant les tâches automatiques</button></div>
     <div id="optMsg"></div></form>
 
+  <div class="card"><h2>Signature des chèques cadeaux</h2>
+    <p class="small muted">Prenez en photo votre signature (à l'encre foncée, sur une feuille blanche), puis choisissez la photo ci-dessous. Le fond blanc est retiré automatiquement. La signature est enregistrée uniquement dans votre base de données, jamais dans GitHub.</p>
+    <div id="sigPrev" style="background:#f7f3ee;border:1px dashed var(--line);border-radius:12px;min-height:90px;display:flex;align-items:center;justify-content:center;margin:8px 0"><span class="small muted">Aucune signature</span></div>
+    <input type="file" id="sigFile" accept="image/*">
+    <div class="row" style="margin-top:8px"><button type="button" class="small auto" id="sigSave" disabled>Enregistrer cette signature</button><button type="button" class="small secondary auto" id="sigDel">Supprimer la signature</button></div>
+  </div>
   <div class="card"><h2>Affiche et import</h2>
     <p><a href="/affiche.html" target="_blank" rel="noopener">Imprimer l'affiche A5 « Rejoignez le programme fidélité » avec le QR code</a></p>
     <h3>Importer des clientes existantes</h3>
@@ -216,5 +222,41 @@ $('rzBtn').addEventListener('click', async () => {
 async function auditLog() {
   try { const d = await api('/api/audit'); $('audit').innerHTML = d.slice(0, 50).map(a => `<div>${fdt(a.at)} · ${esc(a.by)} · ${esc(a.action)} · ${esc(a.detail)}</div>`).join('') || 'Rien pour le moment.'; } catch (e) {}
 }
+
+/* ---- Signature des chèques cadeaux ---- */
+let SIG = null;
+async function sigLoad() { try { const r = await api('/api/admin/signature'); $('sigPrev').innerHTML = r.has ? `<img src="/api/public/signature?v=${Date.now()}" style="max-height:110px;max-width:100%">` : '<span class="small muted">Aucune signature</span>'; } catch (e) {} }
+$('sigFile').addEventListener('change', async () => {
+  const f = $('sigFile').files[0]; if (!f) return;
+  const img = new Image(); img.src = URL.createObjectURL(f); await img.decode();
+  const sc = Math.min(3, 1400 / img.width), w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const ctx = cv.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h), p = d.data; let x0 = w, y0 = h, x1 = 0, y1 = 0;
+  // fond clair -> transparent ; encre (bleue ou noire) -> gris anthracite. On mesure le canal le plus sombre,
+  // ce qui garde l'encre bleue et efface le texte imprimé gris clair éventuel.
+  const lum = i => Math.min(p[i], p[i + 1], p[i + 2]) * 0.7 + (p[i] + p[i + 1] + p[i + 2]) / 3 * 0.3;
+  const hist = []; for (let i = 0; i < p.length; i += 4) hist.push(lum(i)); const sorted = hist.slice().sort((a, b) => a - b);
+  const bg = sorted[Math.floor(sorted.length * 0.6)], cut = Math.min(bg - 28, 228), full = cut - 55;
+  const al = new Uint8ClampedArray(w * h);
+  for (let k = 0; k < w * h; k++) { const l = hist[k]; al[k] = l >= cut ? 0 : l <= full ? 255 : Math.round((cut - l) / (cut - full) * 255); }
+  // épaissit légèrement le trait (1 pixel) pour une signature fine
+  const r = sc > 1.5 ? 2 : 1, al2 = new Uint8ClampedArray(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let m = 0;
+    for (let dy = -r; dy <= r; dy++) { const yy = y + dy; if (yy < 0 || yy >= h) continue; for (let dx = -r; dx <= r; dx++) { const xx = x + dx; if (xx < 0 || xx >= w) continue; const v = al[yy * w + xx]; if (v > m) m = v; } }
+    al2[y * w + x] = m; }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const k = y * w + x, i = k * 4, a = al2[k];
+    p[i] = 38; p[i + 1] = 45; p[i + 2] = 48; p[i + 3] = a;
+    if (a > 90) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; } }
+  if (x1 <= x0 || y1 <= y0) { toast("Signature introuvable sur la photo : utilisez une encre foncée sur fond blanc.", true); return; }
+  ctx.putImageData(d, 0, 0);
+  const m = 8; x0 = Math.max(0, x0 - m); y0 = Math.max(0, y0 - m); x1 = Math.min(w - 1, x1 + m); y1 = Math.min(h - 1, y1 + m);
+  const out = document.createElement('canvas'), ow = Math.min(700, x1 - x0), oh = Math.round((y1 - y0) * ow / (x1 - x0)); out.width = ow; out.height = oh;
+  out.getContext('2d').drawImage(cv, x0, y0, x1 - x0, y1 - y0, 0, 0, ow, oh);
+  SIG = out.toDataURL('image/png');
+  $('sigPrev').innerHTML = `<img src="${SIG}" style="max-height:110px;max-width:100%">`; $('sigSave').disabled = false;
+});
+$('sigSave').addEventListener('click', async () => { if (!SIG) return; $('sigSave').disabled = true; try { await api('/api/admin/signature', { method: 'POST', body: { data_url: SIG } }); toast('Signature enregistrée'); SIG = null; $('sigFile').value = ''; sigLoad(); } catch (e) { toast(e.message, true); $('sigSave').disabled = false; } });
+$('sigDel').addEventListener('click', async () => { if (!confirm('Supprimer la signature des chèques ?')) return; try { await api('/api/admin/signature', { method: 'DELETE' }); toast('Signature supprimée'); sigLoad(); } catch (e) { toast(e.message, true); } });
+sigLoad();
 </script>
 </body></html>

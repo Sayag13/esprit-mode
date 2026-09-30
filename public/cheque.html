@@ -25,6 +25,7 @@
 .f .v.big{font-size:4cqw;font-style:normal;font-weight:600;color:#465157}
 .f .l{font-family:Georgia,serif;font-style:italic;font-size:1.5cqw;color:#697177;margin-top:.3cqw}
 .f.wide{grid-column:1 / span 2}
+.f .sigrow{display:flex;align-items:flex-end;justify-content:space-between;overflow:visible;position:relative}.f .sigimg{height:7cqw;max-width:28cqw;object-fit:contain;margin:-4cqw 1cqw -.6cqw 0}
 .f .sig{font-size:1.5cqw;font-style:normal;font-family:system-ui,sans-serif;color:#697177}
 .strip{background:linear-gradient(180deg,#f0c9b8,#c98d78 55%,#b27a67)}
 .state{margin:14px 0 0;text-align:center}
@@ -66,7 +67,7 @@ const endMonth = d => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', 
         <div class="f"><div class="v">${endMonth(g.expires_at)}</div><div class="l">expire fin</div></div>
         <div class="f wide"><div class="v">${esc(g.recipient || '')}</div><div class="l">${avoir ? 'au nom de' : 'pour'}</div></div>
         <div class="f wide"><div class="v">${esc(avoir ? (g.note || '') : (g.from_name || ''))}</div><div class="l">${avoir ? 'motif' : 'de la part de :'}</div></div>
-        <div class="f wide"><div class="v"><span class="sig">Émis par esprit mode le ${fdate(g.created_at)}</span></div><div class="l">signature autorisée :</div></div>
+        <div class="f wide"><div class="v sigrow"><span class="sig">Émis par esprit mode le ${fdate(g.created_at)}</span><img class="sigimg" src="/api/public/signature" alt="" onerror="this.remove()"></div><div class="l">signature autorisée :</div></div>
       </div>
     </div>
     <div class="strip"></div>
