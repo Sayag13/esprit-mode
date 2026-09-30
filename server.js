@@ -10,6 +10,7 @@
  *   MIGRATE_FROM_DATABASE_URL (facultatif) — ancienne base à recopier une seule fois si DATABASE_URL est une base neuve et vide
  *   PUBLIC_URL      (recommandé) — ex. https://esprit-mode.onrender.com
  *   TZ              (recommandé) — Europe/Paris
+ *   BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME (facultatif) — envoi gratuit des e-mails d'offres via Brevo (300/jour)
  */
 const express = require('express');
 const path = require('path');
@@ -18,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '0.9.0';
+const VERSION = '1.0.0';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -36,10 +37,11 @@ const SESSION_DAYS = 30;
 /* ======================= Données ======================= */
 
 const DEFAULT_SETTINGS = { points_per_euro: 1, threshold: 300, voucher_value_cents: 3000, voucher_validity_days: 365, auto_voucher: true, voucher_conditions: "Bon d'achat valable dans les deux boutiques esprit mode, en une seule fois." };
-const SEQ_KEYS = ['customers', 'purchases', 'users', 'rewards', 'redemptions', 'campaigns', 'loyalty_adjustments', 'vouchers', 'audit'];
+const SEQ_KEYS = ['customers', 'purchases', 'users', 'rewards', 'redemptions', 'campaigns', 'loyalty_adjustments', 'vouchers', 'audit', 'videos'];
+const STORES = ['Clemenceau', 'Général de Gaulle'];
 
 function emptyDb() {
-  return { customers: [], purchases: [], users: [], rewards: [], redemptions: [], loyalty_adjustments: [], campaigns: [], vouchers: [], sessions: [], audit: [],
+  return { customers: [], purchases: [], users: [], rewards: [], redemptions: [], loyalty_adjustments: [], campaigns: [], vouchers: [], sessions: [], audit: [], videos: [], email_log: {},
     settings: { ...DEFAULT_SETTINGS }, seq: Object.fromEntries(SEQ_KEYS.map(k => [k, 1])), migrations: {} };
 }
 function normalizeDb(x) {
@@ -49,6 +51,7 @@ function normalizeDb(x) {
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
   d.seq = { ...base.seq, ...(d.seq || {}) };
   d.migrations = d.migrations || {};
+  d.email_log = d.email_log && typeof d.email_log === 'object' && !Array.isArray(d.email_log) ? d.email_log : {};
   for (const k of SEQ_KEYS) {
     const max = (d[k] || []).reduce((n, r) => Math.max(n, Number(r.id) || 0), 0);
     if (!(Number(d.seq[k]) > max)) d.seq[k] = max + 1;
@@ -423,7 +426,7 @@ app.get('/api/customers/:id/profile', auth, salesOnly, read(req => {
     card_url: cardUrl(c, req),
     stats: { purchases: live.length, total_euros: live.reduce((n, x) => n + x.amount_cents, 0) / 100, points: c.points, last_purchase: live[0] ? live[0].created_at : null,
       remaining: Math.max(0, S().threshold - c.points) },
-    purchases: purchases.map(x => ({ id: x.id, created_at: x.created_at, amount: x.amount_cents / 100, points: x.points, by_user: x.by_user, cancelled: !!x.cancelled })),
+    purchases: purchases.map(x => ({ id: x.id, created_at: x.created_at, amount: x.amount_cents / 100, points: x.points, by_user: x.by_user, store: x.store || '', cancelled: !!x.cancelled })),
     vouchers: db.vouchers.filter(v => v.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)).map(publicVoucher),
     adjustments: db.loyalty_adjustments.filter(a => a.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     redemptions: db.redemptions.filter(r => r.customer_id === c.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -481,7 +484,8 @@ app.post('/api/purchases', auth, salesOnly, tx(req => {
   if (used.some(v => !v || voucherStatus(v) !== 'active')) bad('Un des bons n’est plus utilisable. Rechargez la fiche.');
   const cents = Math.round(amount * 100), points = pointsForCents(cents), t = nowIso();
   for (const v of used) { v.status = 'used'; v.used_at = t; v.used_by = req.user.username; }
-  const p = { id: nextId('purchases'), customer_id: c.id, amount_cents: cents, points, created_at: t, by_user: req.user.username, vouchers_used: used.map(v => v.id) };
+  const store = STORES.includes(x.store) ? x.store : '';
+  const p = { id: nextId('purchases'), customer_id: c.id, amount_cents: cents, points, created_at: t, by_user: req.user.username, store, vouchers_used: used.map(v => v.id) };
   db.purchases.push(p);
   c.points += points;
   const made = autoVouchers(c, req.user);
@@ -538,10 +542,12 @@ app.get('/api/dashboard', auth, adminOnly, read(() => {
     vouchers_created: db.vouchers.filter(v => v.status !== 'cancelled').length, vouchers_used: db.vouchers.filter(v => v.status === 'used').length + db.redemptions.length,
     vouchers_active: db.vouchers.filter(v => voucherStatus(v) === 'active').length, vouchers_expired: db.vouchers.filter(v => voucherStatus(v) === 'expired').length,
     near_reward: customers.filter(c => c.points >= S().threshold - 50).length,
+    by_store: [...STORES, ''].map(st => ({ store: st || 'Non précisée', ca_month: purchases.filter(x => (x.store || '') === st && ts(x) >= startMonth).reduce((n, x) => n + x.amount_cents, 0) / 100,
+      sales_month: purchases.filter(x => (x.store || '') === st && ts(x) >= startMonth).length })).filter(r => r.store !== 'Non précisée' || r.sales_month > 0),
     deletion_requests: customers.filter(c => c.deletion_requested_at).map(c => ({ id: c.id, name: `${c.first_name} ${c.last_name}`, at: c.deletion_requested_at }))
   };
 }));
-app.get('/api/settings', auth, salesOnly, (req, res) => res.json({ ...S(), voucher_value: S().voucher_value_cents / 100 }));
+app.get('/api/settings', auth, salesOnly, (req, res) => res.json({ ...S(), voucher_value: S().voucher_value_cents / 100, stores: STORES }));
 app.post('/api/settings', auth, adminOnly, tx(req => {
   const x = req.body || {};
   const ppe = Number(x.points_per_euro), th = Math.floor(Number(x.threshold)), val = Number(x.voucher_value), days = Math.floor(Number(x.voucher_validity_days));
@@ -567,21 +573,26 @@ app.get('/api/export/customers.csv', auth, adminOnly, async (req, res) => {
 });
 app.get('/api/export/purchases.csv', auth, adminOnly, async (req, res) => {
   const names = Object.fromEntries(db.customers.map(c => [c.id, c]));
-  sendCsv(res, 'esprit-mode-achats.csv', [['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Points', 'Par', 'Annulé'],
-    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), p.points, p.by_user, p.cancelled ? 'oui' : 'non']; })]);
+  sendCsv(res, 'esprit-mode-achats.csv', [['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Points', 'Boutique', 'Par', 'Annulé'],
+    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), p.points, p.store || '', p.by_user, p.cancelled ? 'oui' : 'non']; })]);
 });
 
 /* ======================= Campagnes (consentement obligatoire) ======================= */
 
-const CHANNELS = ['email', 'sms', 'whatsapp', 'facebook', 'instagram'];
+const CHANNELS = ['app', 'email', 'sms', 'whatsapp', 'facebook', 'instagram'];
 function recipients(channel) {
   const base = liveCustomers().filter(c => !c.deletion_requested_at);
   if (channel === 'email') return base.filter(c => c.marketing_email && c.email);
   if (channel === 'sms' || channel === 'whatsapp') return base.filter(c => c.marketing_sms && c.phone);
   return [];
 }
+const EMAIL_DAILY_LIMIT = 300;
+const brevoReady = () => !!(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
+const todayKey = () => new Date().toLocaleDateString('fr-CA');
+const emailsLeft = () => Math.max(0, EMAIL_DAILY_LIMIT - (Number(db.email_log[todayKey()]) || 0));
 app.get('/api/campaigns/audience', auth, managerOnly, read(() => ({
-  total: liveCustomers().length, email: recipients('email').length, sms: recipients('sms').length, whatsapp: recipients('whatsapp').length
+  total: liveCustomers().length, email: recipients('email').length, sms: recipients('sms').length, whatsapp: recipients('whatsapp').length,
+  email_ready: brevoReady(), email_left_today: emailsLeft()
 })));
 app.get('/api/campaigns', auth, managerOnly, read(() => [...db.campaigns].sort((a, b) => b.created_at.localeCompare(a.created_at))));
 app.post('/api/campaigns', auth, managerOnly, tx(req => {
@@ -595,6 +606,77 @@ app.post('/api/campaigns', auth, managerOnly, tx(req => {
   db.campaigns.push(c);
   return c;
 }));
+function campaignById(id) { const c = db.campaigns.find(x => x.id === Number(id)); if (!c) bad('Campagne introuvable', 404); return c; }
+app.delete('/api/campaigns/:id', auth, managerOnly, tx(req => {
+  const c = campaignById(req.params.id);
+  db.campaigns = db.campaigns.filter(x => x !== c);
+  audit(req.user, 'suppression_campagne', c.title);
+}));
+app.post('/api/campaigns/:id/publish', auth, managerOnly, tx(req => {
+  const c = campaignById(req.params.id);
+  c.channels = { ...(c.channels || {}), app: !!(req.body || {}).published };
+  return c;
+}));
+// Liste des destinataires ayant donné leur accord, pour l'envoi manuel (SMS / WhatsApp depuis le téléphone de Michelle)
+app.get('/api/campaigns/:id/recipients', auth, managerOnly, read(req => {
+  const c = campaignById(req.params.id); const ch = String(req.query.channel || '');
+  if (!['sms', 'whatsapp'].includes(ch)) bad('Canal invalide');
+  const done = new Set(((c.manual_sent || {})[ch]) || []);
+  return recipients(ch).map(x => ({ id: x.id, first_name: x.first_name, last_name: x.last_name, phone: x.phone, done: done.has(x.id) }));
+}));
+app.post('/api/campaigns/:id/mark', auth, managerOnly, tx(req => {
+  const c = campaignById(req.params.id); const { channel, customer_id } = req.body || {};
+  if (!['sms', 'whatsapp'].includes(channel)) bad('Canal invalide');
+  c.manual_sent = c.manual_sent || {}; const list = new Set(c.manual_sent[channel] || []); list.add(Number(customer_id));
+  c.manual_sent[channel] = [...list];
+  return { count: list.size };
+}));
+function emailHtml(c, cust, req) {
+  const e = s => String(s || '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+  const msg = e(String(c.message).replace(/\{prenom\}/gi, cust.first_name)).replace(/\n/g, '<br>');
+  const media = /^https:\/\//.test(c.media_url || '') ? `<p><a href="${e(c.media_url)}" style="color:#465157;font-weight:bold">Voir la photo / la vidéo</a></p>` : '';
+  return `<div style="background:#f7f3ee;padding:24px 12px;font-family:Arial,sans-serif;color:#222"><div style="max-width:560px;margin:auto;background:#fff;border-radius:16px;overflow:hidden">
+    <div style="background:#465157;color:#fff;padding:22px;font-size:26px;letter-spacing:2px">esprit mode</div>
+    <div style="padding:22px;font-size:16px;line-height:1.5"><h2 style="font-family:Georgia,serif;font-weight:normal;margin-top:0">${e(c.title)}</h2><p>${msg}</p>${media}
+    <p><a href="${cardUrl(cust, req)}" style="display:inline-block;background:#465157;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">Voir ma carte de fidélité</a></p></div>
+    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 47 av. Georges Clemenceau et 59 av. du Général de Gaulle, 94700 Maisons-Alfort — 06 62 55 24 87<br>
+    Vous recevez cet e-mail car vous avez accepté les offres d'esprit mode. <a href="${baseUrl(req)}/desinscription?token=${cust.public_token}" style="color:#697177">Se désinscrire</a></div></div></div>`;
+}
+async function brevoSend(to, subject, html) {
+  const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST', headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ sender: { email: process.env.BREVO_SENDER_EMAIL, name: process.env.BREVO_SENDER_NAME || 'esprit mode' }, to: [{ email: to.email, name: `${to.first_name} ${to.last_name}` }], subject, htmlContent: html })
+  });
+  if (!r.ok) { let m = ''; try { m = (await r.json()).message || ''; } catch (e) {} throw new Error(`Brevo ${r.status} ${m}`); }
+}
+let sending = false;
+app.post('/api/campaigns/:id/send-email', auth, managerOnly, async (req, res) => {
+  try {
+    if (!brevoReady()) bad("L'envoi d'e-mails n'est pas encore activé (compte Brevo à relier dans Render).");
+    if (sending) bad('Un envoi est déjà en cours. Patientez.', 429);
+    const c = campaignById(req.params.id);
+    if (c.email_sent_at) bad('Cette campagne a déjà été envoyée par e-mail.');
+    const list = recipients('email');
+    if (!list.length) bad("Aucune cliente n'a accepté les offres par e-mail.");
+    if (list.length > emailsLeft()) bad(`Limite gratuite : il reste ${emailsLeft()} e-mails aujourd'hui pour ${list.length} destinataires. Réessayez demain.`);
+    sending = true;
+    let ok = 0, failed = 0, lastErr = '';
+    for (const cust of list) {
+      try { await brevoSend(cust, c.title, emailHtml(c, cust, req)); ok++; }
+      catch (e) { failed++; lastErr = e.message; if (/Brevo 40[13]/.test(e.message)) break; }
+      await new Promise(r => setTimeout(r, 120));
+    }
+    const k = todayKey(); db.email_log = { [k]: (Number(db.email_log[k]) || 0) + ok };
+    if (ok) { c.email_sent_at = nowIso(); c.email_sent_count = ok; c.status = 'envoyee'; }
+    audit(req.user, 'envoi_email', `${c.title} : ${ok} envoyé(s), ${failed} échec(s)`);
+    await persist();
+    if (!ok) bad("Aucun e-mail n'est parti. " + (lastErr.includes('401') || lastErr.includes('403') ? 'La clé Brevo est refusée : vérifiez-la dans Render.' : lastErr), 502);
+    res.json({ sent: ok, failed });
+  } catch (e) {
+    if (e instanceof HttpError) res.status(e.status).json({ error: e.message });
+    else { console.error(e); res.status(500).json({ error: "Erreur pendant l'envoi." }); }
+  } finally { sending = false; }
+});
 app.post('/api/campaigns/:id/status', auth, managerOnly, tx(req => {
   const c = db.campaigns.find(x => x.id === Number(req.params.id)); if (!c) bad('Campagne introuvable', 404);
   if (!['brouillon', 'prete', 'envoyee'].includes((req.body || {}).status)) bad('Statut invalide');
@@ -608,6 +690,29 @@ app.get('/api/campaigns/recipients.csv', auth, managerOnly, (req, res) => {
   sendCsv(res, `destinataires-${ch}.csv`, [['Prénom', 'Nom', ch === 'email' ? 'E-mail' : 'Téléphone', 'Lien de désinscription'],
     ...list.map(c => [c.first_name, c.last_name, ch === 'email' ? c.email : c.phone, ch === 'email' ? `${baseUrl(req)}/desinscription?token=${c.public_token}` : ''])]);
 });
+
+/* ======================= Vidéos de Michelle et contenus publics ======================= */
+
+function publicVideo(v) { return { id: v.id, title: v.title, url: v.url, description: v.description, created_at: v.created_at, active: v.active !== false }; }
+app.get('/api/videos', auth, managerOnly, read(() => [...db.videos].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(publicVideo)));
+app.post('/api/videos', auth, managerOnly, tx(req => {
+  const x = req.body || {}; const title = clean(x.title, 120), url = String(x.url || '').trim().slice(0, 500);
+  if (!title) bad('Donnez un titre à la vidéo.');
+  if (!/^https:\/\/[^\s<>"]+$/.test(url)) bad('Collez le lien complet de la vidéo (il commence par https://).');
+  const v = { id: nextId('videos'), title, url, description: clean(x.description, 300), active: true, created_at: nowIso(), created_by: req.user.username };
+  db.videos.push(v); return publicVideo(v);
+}));
+app.put('/api/videos/:id', auth, managerOnly, tx(req => {
+  const v = db.videos.find(x => x.id === Number(req.params.id)); if (!v) bad('Vidéo introuvable', 404);
+  if ((req.body || {}).active !== undefined) v.active = !!req.body.active;
+  return publicVideo(v);
+}));
+app.delete('/api/videos/:id', auth, managerOnly, tx(req => { db.videos = db.videos.filter(x => x.id !== Number(req.params.id)); }));
+app.get('/api/public/content', read(() => ({
+  offers: db.campaigns.filter(c => c.channels && c.channels.app).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 5)
+    .map(c => ({ title: c.title, message: String(c.message).replace(/\s*\{prenom\}/gi, '').trim(), media_url: /^https:\/\//.test(c.media_url || '') ? c.media_url : '', created_at: c.created_at })),
+  videos: db.videos.filter(v => v.active !== false).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 12).map(publicVideo)
+})));
 
 /* ======================= Lancement ======================= */
 

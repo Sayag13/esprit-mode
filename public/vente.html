@@ -5,7 +5,8 @@
 <header class="top"><span class="brand">esprit mode<small>caisse</small></span><nav id="nav"></nav></header>
 <main class="narrow">
   <div class="card" id="searchCard">
-    <h2>Rechercher une cliente</h2>
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Rechercher une cliente</h2>
+      <select id="store" class="auto" style="width:auto" aria-label="Boutique"><option value="">Boutique…</option><option>Clemenceau</option><option>Général de Gaulle</option></select></div>
     <input id="q" type="search" placeholder="Téléphone, nom ou e-mail" autocomplete="off" autofocus>
     <div id="hint" class="small muted">Tapez les premiers chiffres du téléphone ou le nom.</div>
     <div id="results"></div>
@@ -30,6 +31,8 @@
 <script src="app.js"></script>
 <script>
 let SET = null, CUR = null, timer = null, lastList = [];
+try { $('store').value = localStorage.getItem('store') || ''; } catch (e) {}
+$('store').addEventListener('change', () => { try { localStorage.setItem('store', $('store').value); } catch (e) {} toast($('store').value ? 'Boutique : ' + $('store').value : 'Boutique non précisée'); });
 (async () => { if (!(await staffNav('vente'))) return; try { SET = await api('/api/settings'); } catch (e) { toast(e.message, true); } })();
 
 $('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(find, 200); });
@@ -68,6 +71,7 @@ function showClient() {
     <div class="row" style="justify-content:space-between"><div><h2 style="margin:0">${esc(c.first_name)} ${esc(c.last_name)}</h2><div class="muted small">${esc(fmtPhone(c.phone))} · ${c.points} points · encore ${CUR.stats.remaining} pour le bon</div></div>
       <button type="button" class="small secondary auto" id="closeClient">Changer</button></div>
     ${c.deletion_requested_at ? '<p class="warn">Cette cliente a demandé la suppression de son compte.</p>' : ''}
+    ${$('store').value ? '' : '<p class="warn small">Choisissez la boutique en haut (Clemenceau ou Général de Gaulle) : elle est notée sur chaque achat et retenue sur cet appareil.</p>'}
     <form id="buy" novalidate>
       <label class="field">Montant payé (€)<input id="amount" class="big-amount" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
       ${act.length ? '<p class="field">Bons d\'achat disponibles</p>' + act.map(v => `<label class="check"><input type="checkbox" data-v="${v.id}"> <span>Utiliser le bon de ${euros0(v.value)} (jusqu'au ${fdate(v.expires_at)})</span></label>`).join('') : ''}
@@ -90,7 +94,7 @@ async function buy(e) {
   e.preventDefault(); const b = $('buyBtn'); b.disabled = true; $('buyMsg').className = ''; $('buyMsg').textContent = '';
   try {
     const voucher_ids = [...document.querySelectorAll('[data-v]')].filter(x => x.checked).map(x => Number(x.dataset.v));
-    const r = await api('/api/purchases', { method: 'POST', body: { customer_id: CUR.customer.id, amount: $('amount').value, voucher_ids } });
+    const r = await api('/api/purchases', { method: 'POST', body: { customer_id: CUR.customer.id, amount: $('amount').value, voucher_ids, store: $('store').value } });
     $('clientCard').innerHTML = `<div class="done"><p class="muted">${esc(r.first_name)} ${esc(r.last_name)}</p><h2>Achat enregistré</h2>
       <div class="plus">+${r.added} points</div><p>Nouveau solde : <b>${r.points} points</b></p>
       ${r.vouchers_used.length ? `<p class="ok">Bon de ${euros0(r.vouchers_used.reduce((n, v) => n + v.value, 0))} utilisé.</p>` : ''}

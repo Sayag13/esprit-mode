@@ -41,6 +41,7 @@ function render() {
     ${D.vouchers.filter(v => v.status !== 'active').map(v => `<div class="item small"><span>Bon de ${euros0(v.value)}</span><span class="muted">${v.status === 'used' ? 'utilisé le ' + fdate(v.used_at) : v.status === 'expired' ? 'expiré le ' + fdate(v.expires_at) : 'annulé'}</span></div>`).join('')}
     ${(D.redemptions || []).map(r => `<div class="item small"><span>Récompense de ${euros0(r.value)}</span><span class="muted">utilisée le ${fdate(r.created_at)}</span></div>`).join('')}
     ${R.conditions ? `<p class="small muted">${esc(R.conditions)}</p>` : ''}</div>
+  <div id="content"></div>
   <div class="card qrwrap"><h2>Mon QR code</h2><img class="qr" src="/api/public/qr/${encodeURIComponent(token)}" alt="QR code de ma carte"><p class="small muted">En caisse, donnez votre numéro de téléphone ou montrez ce QR code.</p></div>
   <div class="card"><h2>Mes achats</h2>${D.history.map(x => `<div class="item"><span>${fdate(x.created_at)}</span><span>${money(x.amount)} · +${x.points} pts</span></div>`).join('') || '<p class="muted">Aucun achat enregistré.</p>'}</div>
   <details class="card"><summary><b>Ajouter ma carte à l'écran d'accueil</b></summary>
@@ -66,6 +67,7 @@ function render() {
   $('edit').addEventListener('submit', save);
   const del = $('delAsk'); if (del) del.addEventListener('click', askDelete);
   $('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));
+  loadContent();
 }
 async function save(e) {
   e.preventDefault(); $('saveBtn').disabled = true;
@@ -75,6 +77,14 @@ async function save(e) {
     $('saved').className = 'ok'; $('saved').textContent = 'Coordonnées mises à jour.';
   } catch (err) { $('saved').className = 'err'; $('saved').textContent = err.message; }
   $('saveBtn').disabled = false;
+}
+function videoLabel(u) { return /instagram\.com/.test(u) ? 'Regarder sur Instagram' : /facebook\.com|fb\.watch/.test(u) ? 'Regarder sur Facebook' : /youtu/.test(u) ? 'Regarder sur YouTube' : 'Regarder la vidéo'; }
+async function loadContent() {
+  let c; try { c = await api('/api/public/content'); } catch (e) { return; }
+  let h = '';
+  if (c.offers.length) h += `<div class="card"><h2>Offres et nouveautés</h2>${c.offers.map(o => `<div class="item" style="display:block"><div class="name">${esc(o.title)}</div><p style="white-space:pre-line;margin:6px 0">${esc(o.message)}</p>${o.media_url ? `<a href="${esc(o.media_url)}" target="_blank" rel="noopener">Voir la photo / la vidéo</a>` : ''}<div class="small muted">${fdate(o.created_at)}</div></div>`).join('')}</div>`;
+  if (c.videos.length) h += `<div class="card"><h2>Les vidéos de Michelle</h2>${c.videos.map(v => `<div class="item"><div><div class="name">${esc(v.title)}</div>${v.description ? `<div class="small muted">${esc(v.description)}</div>` : ''}</div><a href="${esc(v.url)}" target="_blank" rel="noopener" style="display:inline-block;background:var(--ink);color:#fff;border-radius:10px;padding:9px 13px;text-decoration:none;font-size:14px">${videoLabel(v.url)}</a></div>`).join('')}</div>`;
+  $('content').innerHTML = h;
 }
 function askDelete() {
   $('delZone').innerHTML = `<p class="warn">Votre carte, vos points et vos bons seront supprimés. Confirmez-vous ?</p><div class="row"><button class="danger" id="delYes">Oui, supprimer mon compte</button><button class="secondary" id="delNo">Annuler</button></div>`;

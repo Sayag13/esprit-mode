@@ -1,4 +1,4 @@
-# esprit mode — v0.9.0
+# esprit mode — v1.0.0
 
 Carte de fidélité (PWA) des boutiques esprit mode, Maisons-Alfort. Node.js + Express + PostgreSQL (Neon), hébergée sur Render.
 
@@ -13,3 +13,5 @@ Variables Render : DATABASE_URL (Neon), ADMIN_PASSWORD (10 caractères min.), PU
 Aucun mot de passe n'est écrit dans le code.
 
 Voir AUDIT-v0.8.md (état des lieux) et GUIDE-MISE-EN-LIGNE.md (passage en v0.9).
+
+v1.0 : offres et vidéos de Michelle affichées sur la carte cliente ; envoi gratuit des e-mails via Brevo (300/jour, variables BREVO_API_KEY et BREVO_SENDER_EMAIL) ; SMS et WhatsApp envoyés une par une depuis le téléphone de Michelle (gratuit) ; boutique notée sur chaque achat ; suppression des campagnes.

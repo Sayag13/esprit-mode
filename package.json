@@ -1,6 +1,6 @@
 {
   "name": "esprit-mode-fidelite",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Carte de fidélité esprit mode (PWA)",
   "main": "server.js",

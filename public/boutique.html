@@ -18,23 +18,31 @@
     <input id="title" placeholder="Titre de la promotion *"><textarea id="message" placeholder="Votre message… *"></textarea>
     <input id="media" placeholder="Lien vers photo ou vidéo (facultatif)">
     <div class="grid">
+      <label class="check"><input type="checkbox" id="ch_app" checked> <span>Espace cliente (sur la carte)</span></label>
       <label class="check"><input type="checkbox" id="ch_email"> <span>E-mail</span></label>
       <label class="check"><input type="checkbox" id="ch_sms"> <span>SMS</span></label>
       <label class="check"><input type="checkbox" id="ch_whatsapp"> <span>WhatsApp</span></label>
       <label class="check"><input type="checkbox" id="ch_facebook"> <span>Facebook (publication)</span></label>
       <label class="check"><input type="checkbox" id="ch_instagram"> <span>Instagram (publication)</span></label>
     </div>
+    <p class="small muted">Astuce : écrivez {prenom} dans le message, il sera remplacé par le prénom de chaque cliente (e-mail, SMS, WhatsApp).</p>
     <button id="campBtn">Enregistrer la campagne</button><div id="campMsg"></div>
-    <h3>Listes de destinataires (accord donné)</h3>
-    <div class="row"><button type="button" class="secondary small" data-dl="email">Adresses e-mail (CSV)</button><button type="button" class="secondary small" data-dl="sms">Numéros SMS (CSV)</button><button type="button" class="secondary small" data-dl="whatsapp">Numéros WhatsApp (CSV)</button></div>
-    <p class="small muted">Le fichier e-mail contient pour chaque cliente son lien de désinscription : ajoutez-le en bas de chaque e-mail envoyé.</p>
+    <details><summary class="small">Listes de destinataires en fichier (CSV)</summary>
+    <div class="row"><button type="button" class="secondary small" data-dl="email">Adresses e-mail</button><button type="button" class="secondary small" data-dl="sms">Numéros SMS</button><button type="button" class="secondary small" data-dl="whatsapp">Numéros WhatsApp</button></div></details>
   </form>
-  <div class="card"><h2>Campagnes</h2><div id="campList">Chargement…</div></div>
+  <div class="card"><h2>Campagnes</h2><p class="small muted">Chaque campagne s'envoie ici : e-mail automatique, SMS et WhatsApp un par un depuis votre téléphone, ou affichage sur la carte des clientes.</p><div id="campList">Chargement…</div></div>
+  <div class="card hidden" id="manual"></div>
+
+  <form class="card" id="vid" novalidate><h2>Les vidéos de Michelle</h2>
+    <p class="small muted">Collez le lien d'une vidéo Instagram, Facebook ou YouTube (copier le lien depuis l'application). Elle apparaît sur la carte de toutes les clientes.</p>
+    <input id="vt" placeholder="Titre (ex. Nouvelle collection automne) *"><input id="vu" placeholder="Lien de la vidéo (https://…) *"><input id="vd" placeholder="Petite description (facultatif)">
+    <button id="vBtn">Ajouter la vidéo</button><div id="vMsg"></div>
+    <div id="vList" class="small">Chargement…</div></form>
 </main>
 <script src="app.js"></script>
 <script>
 let ME = null, P = null, timer = null;
-(async () => { ME = await staffNav('boutique'); if (!ME) return; loadVouchers(); loadAudience(); loadCampaigns(); const cid = new URLSearchParams(location.search).get('c'); if (cid) openProfile(Number(cid)); })();
+(async () => { ME = await staffNav('boutique'); if (!ME) return; loadVouchers(); loadAudience(); loadCampaigns(); loadVideos(); const cid = new URLSearchParams(location.search).get('c'); if (cid) openProfile(Number(cid)); })();
 
 $('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(search, 200); });
 async function search() {
@@ -74,7 +82,7 @@ function renderProfile() {
     <h3>Ajuster les points</h3>
     <div class="row"><input id="delta" type="number" placeholder="+50 ou -20"><input id="reason" placeholder="Motif (obligatoire)"><button class="small auto" id="adjBtn">Enregistrer</button></div>
     <h3>Historique des achats</h3>
-    ${P.purchases.length ? `<div class="tablewrap"><table><tr><th>Date</th><th>Montant</th><th>Points</th><th>Par</th><th></th></tr>${P.purchases.map(x => `<tr class="${x.cancelled ? 'cancelled' : ''}"><td>${fdt(x.created_at)}</td><td>${money(x.amount)}</td><td>+${x.points}</td><td>${esc(x.by_user || '—')}</td><td class="keep">${x.cancelled ? '<span class="tag">annulé</span>' : `<button class="small danger" data-pcancel="${x.id}">Annuler</button>`}</td></tr>`).join('')}</table></div>` : '<p class="muted small">Aucun achat.</p>'}
+    ${P.purchases.length ? `<div class="tablewrap"><table><tr><th>Date</th><th>Montant</th><th>Points</th><th>Par</th><th></th></tr>${P.purchases.map(x => `<tr class="${x.cancelled ? 'cancelled' : ''}"><td>${fdt(x.created_at)}</td><td>${money(x.amount)}</td><td>+${x.points}</td><td>${esc(x.by_user || '—')}${x.store ? '<div class="small muted">' + esc(x.store) + '</div>' : ''}</td><td class="keep">${x.cancelled ? '<span class="tag">annulé</span>' : `<button class="small danger" data-pcancel="${x.id}">Annuler</button>`}</td></tr>`).join('')}</table></div>` : '<p class="muted small">Aucun achat.</p>'}
     ${P.redemptions.length ? '<h3>Récompenses utilisées (ancien système)</h3>' + P.redemptions.map(r => `<div class="small">${fdate(r.created_at)} · ${esc(r.name)} · ${r.points_used} pts · ${esc(r.by_user || '')}</div>`).join('') : ''}
     ${P.adjustments.length ? '<h3>Ajustements</h3>' + P.adjustments.map(a => `<div class="small">${fdate(a.created_at)} · ${a.delta > 0 ? '+' : ''}${a.delta} pts · ${esc(a.reason)} · ${esc(a.by_user)}</div>`).join('') : ''}
     <h3>Lien de sa carte</h3><img class="qr" alt="QR code" src="/api/public/qr/${encodeURIComponent(P.card_url.split('token=')[1] || '')}">`;
@@ -103,26 +111,96 @@ async function loadVouchers() {
     $('vouchers').innerHTML = d.length ? d.map(v => `<div class="item"><div><b>${esc(v.customer)}</b> · bon de ${euros0(v.value)} · jusqu'au ${fdate(v.expires_at)}</div><button class="small secondary" data-open="${v.customer_id}">Fiche</button></div>`).join('') : 'Aucun bon en cours.';
   } catch (e) { $('vouchers').textContent = e.message; }
 }
+let AUD = null;
 async function loadAudience() {
-  try { const a = await api('/api/campaigns/audience');
-    $('aud').innerHTML = `<div class="kpi"><b>${a.total}</b><span>clientes</span></div><div class="kpi"><b>${a.email}</b><span>acceptent l'e-mail</span></div><div class="kpi"><b>${a.sms}</b><span>acceptent SMS / WhatsApp</span></div>`;
+  try { AUD = await api('/api/campaigns/audience');
+    $('aud').innerHTML = `<div class="kpi"><b>${AUD.total}</b><span>clientes</span></div><div class="kpi"><b>${AUD.email}</b><span>acceptent l'e-mail</span></div><div class="kpi"><b>${AUD.sms}</b><span>acceptent SMS / WhatsApp</span></div>` +
+      (AUD.email_ready ? `<div class="kpi"><b>${AUD.email_left_today}</b><span>e-mails gratuits restants aujourd'hui</span></div>` : `<div class="kpi"><b>—</b><span>envoi e-mail pas encore activé</span></div>`);
   } catch (e) {}
 }
+const CH = { app: 'Espace cliente', email: 'E-mail', sms: 'SMS', whatsapp: 'WhatsApp', facebook: 'Facebook', instagram: 'Instagram' };
+let CAMPS = [];
 async function loadCampaigns() {
   try {
-    const d = await api('/api/campaigns');
-    $('campList').innerHTML = d.map(c => `<div class="item" style="display:block"><b>${esc(c.title)}</b><p style="white-space:pre-line">${esc(c.message)}</p>${c.media_url ? `<p class="small">Média : ${esc(c.media_url)}</p>` : ''}
-      <div>${Object.entries(c.channels || {}).filter(x => x[1]).map(x => `<span class="tag">${esc(x[0])}${c.recipients && c.recipients[x[0]] !== undefined ? ' · ' + c.recipients[x[0]] + ' dest.' : ''}</span>`).join(' ')}</div>
-      <small class="muted">${esc(c.status)} — ${fdt(c.created_at)} — ${esc(c.created_by || '')}</small></div>`).join('') || '<p>Aucune campagne.</p>';
+    CAMPS = await api('/api/campaigns');
+    $('campList').innerHTML = CAMPS.map(c => {
+      const ch = c.channels || {};
+      const btns = [];
+      if (ch.email) btns.push(c.email_sent_at ? `<span class="tag ok">E-mail envoyé à ${c.email_sent_count} le ${fdate(c.email_sent_at)}</span>` : `<button class="small" data-send="${c.id}">Envoyer l'e-mail</button>`);
+      if (ch.sms) btns.push(`<button class="small secondary" data-manual="${c.id}" data-ch="sms">SMS une par une${c.manual_sent && c.manual_sent.sms ? ' (' + c.manual_sent.sms.length + ' faits)' : ''}</button>`);
+      if (ch.whatsapp) btns.push(`<button class="small secondary" data-manual="${c.id}" data-ch="whatsapp">WhatsApp une par une${c.manual_sent && c.manual_sent.whatsapp ? ' (' + c.manual_sent.whatsapp.length + ' faits)' : ''}</button>`);
+      btns.push(`<button class="small secondary" data-pub="${c.id}" data-on="${ch.app ? 0 : 1}">${ch.app ? 'Retirer de l’espace cliente' : 'Afficher sur la carte des clientes'}</button>`);
+      btns.push(`<button class="small danger" data-cdel="${c.id}">Supprimer</button>`);
+      return `<div class="item" style="display:block"><b>${esc(c.title)}</b><p style="white-space:pre-line;margin:6px 0">${esc(c.message)}</p>${c.media_url ? `<p class="small">Média : ${esc(c.media_url)}</p>` : ''}
+        <div>${Object.entries(ch).filter(x => x[1]).map(x => `<span class="tag">${esc(CH[x[0]] || x[0])}</span>`).join(' ')}</div>
+        <small class="muted">${fdt(c.created_at)} — ${esc(c.created_by || '')}</small><div class="row" style="margin-top:6px">${btns.join('')}</div></div>`;
+    }).join('') || '<p>Aucune campagne.</p>';
   } catch (e) { $('campList').textContent = e.message; }
 }
+function intl(p) { const d = String(p || '').replace(/\D/g, ''); return d.startsWith('0') ? '33' + d.slice(1) : d; }
+function personal(msg, c) { return String(msg).replace(/\{prenom\}/gi, c.first_name); }
+let MAN = null;
+async function openManual(id, ch) {
+  const camp = CAMPS.find(x => x.id === id);
+  try { const list = await api('/api/campaigns/' + id + '/recipients?channel=' + ch); MAN = { camp, ch, list }; renderManual(); $('manual').scrollIntoView({ behavior: 'smooth' }); }
+  catch (e) { toast(e.message, true); }
+}
+function renderManual() {
+  const { camp, ch, list } = MAN; const done = list.filter(x => x.done).length;
+  $('manual').classList.remove('hidden');
+  $('manual').innerHTML = `<div class="row" style="justify-content:space-between"><h2 style="margin:0">${ch === 'sms' ? 'SMS' : 'WhatsApp'} : ${esc(camp.title)}</h2><button class="small secondary auto" id="manClose">Fermer</button></div>
+    <p class="small muted">À faire depuis <b>votre téléphone</b>. Touchez « Ouvrir », le message est déjà écrit : appuyez sur Envoyer, puis revenez ici. ${done} / ${list.length} fait(s). Seules les clientes qui ont accepté sont listées.</p>
+    ${list.map(c => { const text = personal(camp.message, c) + (camp.media_url ? '\n' + camp.media_url : '');
+      const href = ch === 'sms' ? `sms:+${intl(c.phone)}?&body=${encodeURIComponent(text)}` : `https://wa.me/${intl(c.phone)}?text=${encodeURIComponent(text)}`;
+      return `<div class="item"><div><b>${esc(c.first_name)} ${esc(c.last_name)}</b> <span class="small muted">${esc(fmtPhone(c.phone))}</span></div>
+        <div>${c.done ? '<span class="tag ok">fait</span>' : ''}<a class="small" style="display:inline-block;background:var(--ink);color:#fff;border-radius:10px;padding:8px 12px;text-decoration:none" href="${href}" data-mark="${c.id}" ${ch === 'whatsapp' ? 'target="_blank" rel="noopener"' : ''}>Ouvrir</a></div></div>`; }).join('') || '<p>Aucune cliente n\'a accepté ce canal.</p>'}`;
+  $('manClose').addEventListener('click', () => { $('manual').classList.add('hidden'); loadCampaigns(); });
+}
+$('manual').addEventListener('click', e => {
+  const a = e.target.closest('[data-mark]'); if (!a || !MAN) return;
+  const id = Number(a.dataset.mark); const it = MAN.list.find(x => x.id === id); if (it) it.done = true;
+  api('/api/campaigns/' + MAN.camp.id + '/mark', { method: 'POST', body: { channel: MAN.ch, customer_id: id } }).catch(() => {});
+  setTimeout(renderManual, 300);
+});
+$('campList').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.send) {
+      const c = CAMPS.find(x => x.id === Number(b.dataset.send));
+      if (!confirm(`Envoyer « ${c.title} » par e-mail à ${AUD ? AUD.email : ''} cliente(s) ? L'envoi ne peut pas être annulé.`)) return;
+      b.disabled = true; b.textContent = 'Envoi en cours…';
+      const r = await api('/api/campaigns/' + c.id + '/send-email', { method: 'POST' });
+      toast(`${r.sent} e-mail(s) envoyé(s)${r.failed ? ', ' + r.failed + ' échec(s)' : ''}`);
+    } else if (b.dataset.manual) { return openManual(Number(b.dataset.manual), b.dataset.ch); }
+    else if (b.dataset.pub) { await api('/api/campaigns/' + b.dataset.pub + '/publish', { method: 'POST', body: { published: b.dataset.on === '1' } }); toast(b.dataset.on === '1' ? 'Affichée sur la carte des clientes' : 'Retirée de l’espace cliente'); }
+    else if (b.dataset.cdel) { if (!confirm('Supprimer cette campagne ?')) return; await api('/api/campaigns/' + b.dataset.cdel, { method: 'DELETE' }); toast('Campagne supprimée'); }
+  } catch (err) { toast(err.message, true); }
+  loadCampaigns(); loadAudience();
+});
+async function loadVideos() {
+  try { const d = await api('/api/videos');
+    $('vList').innerHTML = d.map(v => `<div class="item"><div><b>${esc(v.title)}</b>${v.active ? '' : ' <span class="tag">masquée</span>'}<div class="muted">${esc(v.url)}</div></div><div><button type="button" class="small secondary" data-vtog="${v.id}" data-on="${v.active ? 0 : 1}">${v.active ? 'Masquer' : 'Afficher'}</button><button type="button" class="small danger" data-vdel="${v.id}">Supprimer</button></div></div>`).join('') || '<p class="muted">Aucune vidéo pour le moment.</p>';
+  } catch (e) { $('vList').textContent = e.message; }
+}
+$('vid').addEventListener('submit', async e => {
+  e.preventDefault(); $('vBtn').disabled = true;
+  try { await api('/api/videos', { method: 'POST', body: { title: $('vt').value, url: $('vu').value, description: $('vd').value } }); ['vt', 'vu', 'vd'].forEach(i => $(i).value = ''); $('vMsg').className = 'ok'; $('vMsg').textContent = 'Vidéo ajoutée : elle apparaît sur la carte des clientes.'; loadVideos(); }
+  catch (err) { $('vMsg').className = 'err'; $('vMsg').textContent = err.message; }
+  $('vBtn').disabled = false;
+});
+$('vList').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try { if (b.dataset.vtog) await api('/api/videos/' + b.dataset.vtog, { method: 'PUT', body: { active: b.dataset.on === '1' } });
+    else if (b.dataset.vdel) { if (!confirm('Supprimer cette vidéo ?')) return; await api('/api/videos/' + b.dataset.vdel, { method: 'DELETE' }); }
+    loadVideos(); } catch (err) { toast(err.message, true); }
+});
 $('camp').addEventListener('submit', async e => {
   e.preventDefault(); $('campBtn').disabled = true;
   try {
     const body = { title: $('title').value, message: $('message').value, media_url: $('media').value };
-    for (const k of ['email', 'sms', 'whatsapp', 'facebook', 'instagram']) body[k] = $('ch_' + k).checked;
+    for (const k of ['app', 'email', 'sms', 'whatsapp', 'facebook', 'instagram']) body[k] = $('ch_' + k).checked;
     const c = await api('/api/campaigns', { method: 'POST', body });
-    $('campMsg').className = 'ok'; $('campMsg').textContent = 'Campagne enregistrée.' + (c.recipients.email !== undefined ? ` E-mail : ${c.recipients.email} destinataires.` : '') + (c.recipients.sms !== undefined ? ` SMS : ${c.recipients.sms}.` : '');
+    $('campMsg').className = 'ok'; $('campMsg').textContent = 'Campagne enregistrée' + (c.channels.app ? ' et affichée sur la carte des clientes' : '') + '. Pour l’envoyer, utilisez les boutons de la campagne ci-dessous.';
     $('title').value = $('message').value = $('media').value = ''; loadCampaigns();
   } catch (err) { $('campMsg').className = 'err'; $('campMsg').textContent = err.message; }
   $('campBtn').disabled = false;

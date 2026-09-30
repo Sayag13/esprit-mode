@@ -52,6 +52,7 @@ async function dashboard() {
     const k = (v, l) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`;
     $('dash').innerHTML = k(d.customers, 'clientes') + k(d.new_month, 'nouvelles ce mois') + k(money(d.ca_today), 'CA du jour') + k(money(d.ca_month), 'CA du mois') +
       k(d.sales_month ? money(d.ca_month / d.sales_month) : '—', 'panier moyen du mois') + k(d.active_90, 'actives (90 jours)');
+    if (d.by_store && d.by_store.length) $('dash').innerHTML += d.by_store.map(r => k(money(r.ca_month), 'CA du mois — ' + esc(r.store) + ' (' + r.sales_month + ' achats)')).join('');
     $('fid').innerHTML = `<h2>Fidélité</h2><div class="grid">${k(d.points_distributed, 'points distribués')}${k(d.vouchers_created, 'bons créés')}${k(d.vouchers_used, 'bons utilisés')}${k(d.vouchers_active, 'bons en cours')}${k(d.vouchers_expired, 'bons expirés')}${k(d.near_reward, 'proches de la carte pleine')}</div>`;
     if (d.deletion_requests.length) {
       $('delreq').classList.remove('hidden');
