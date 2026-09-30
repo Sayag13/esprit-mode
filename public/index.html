@@ -1,6 +1,12 @@
 <!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
-<link rel="manifest" href="manifest.json"><link rel="stylesheet" href="style.css"><title>esprit mode — Fidélité</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="esprit mode"><meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="/manifest.json">
+
+<link rel="stylesheet" href="style.css"><title>esprit mode — Fidélité</title>
 <style>.hero{text-align:center;padding:18px 6px}.hero h1{font-family:Georgia,serif;font-weight:500;font-size:32px;margin:6px 0}.eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}.appqr{display:block;width:180px;height:180px;margin:10px auto}.soc{display:grid;grid-template-columns:1fr 1fr;gap:10px}.soc a{display:block;text-align:center;text-decoration:none;background:var(--ink);color:#fff;border-radius:12px;padding:12px;font-weight:600}</style>
 </head>
 <body>
@@ -29,7 +35,8 @@
   <div class="card"><h2>Déjà cliente ?</h2><p>Votre carte s'ouvre avec votre lien personnel (ajoutez-le à l'écran d'accueil de votre téléphone). Vous l'avez perdu ? Demandez-le en boutique : la vendeuse vous le montre en QR code.</p>
     <p class="small"><a href="/login.html">Espace équipe</a></p></div>
 
-  <div class="card"><h2>Installer esprit mode</h2><p>Scannez ce QR code pour ouvrir la page sur votre téléphone, puis ajoutez-la à l'écran d'accueil.</p><img src="/api/public/app-qr" alt="QR code esprit mode" class="appqr"><button id="shareBtn">Partager l'application</button><div id="shareMsg" class="small muted"></div></div>
+  <div id="myCard" class="hidden"></div>
+  <div class="card"><h2>Installer esprit mode</h2><div id="installBox"></div><p class="small muted">Sur un ordinateur : scannez ce QR code avec votre téléphone.</p><img src="/api/public/app-qr" alt="QR code esprit mode" class="appqr"><button id="shareBtn">Partager l'application</button><div id="shareMsg" class="small muted"></div></div>
 
   <div class="card"><h2>Suivez esprit mode</h2><p class="muted">Les nouveautés et les vidéos de Michelle.</p>
     <div class="soc"><a href="https://www.instagram.com/channel/AbaNU8DS6tgq9Eq6/" target="_blank" rel="noopener">Instagram</a><a href="https://www.facebook.com/share/v/1Dn4Wx3Ww8/" target="_blank" rel="noopener">Facebook</a></div></div>
@@ -57,6 +64,7 @@ $('reg').addEventListener('submit', async e => {
   } catch (err) { $('msg').className = 'err'; $('msg').textContent = err.message; b.disabled = false; }
 });
 $('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+$('installBox').innerHTML = installBox('Ajoutez esprit mode à votre téléphone');
+try { const t = localStorage.getItem('card_token'); if (t) { $('myCard').className = 'card'; $('myCard').innerHTML = `<h2>Ma carte</h2><a href="/carte.html?token=${encodeURIComponent(t)}" style="display:block;text-align:center;background:var(--ink);color:#fff;border-radius:12px;padding:13px;text-decoration:none;font-weight:600">Ouvrir ma carte de fidélité</a>`; if (isStandalone()) location.replace('/carte.html?token=' + encodeURIComponent(t)); } } catch (e) {}
 </script>
 </body></html>

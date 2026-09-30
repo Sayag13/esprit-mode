@@ -66,3 +66,22 @@ async function shareApp(msgEl) {
   try { await navigator.clipboard.writeText(text); if (msgEl) msgEl.textContent = 'Message copié : collez-le dans WhatsApp ou vos SMS.'; }
   catch (e) { if (msgEl) msgEl.textContent = url; }
 }
+
+/* Installation sur l'écran d'accueil (iPhone et Android) */
+let _installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); _installEvt = e; document.querySelectorAll('[data-install-android]').forEach(b => b.classList.remove('hidden')); });
+function isStandalone() { return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true; }
+function installBox(label) {
+  if (isStandalone()) return '<p class="ok">Vous utilisez l\'application esprit mode installée sur votre téléphone.</p>';
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const shareIcon = '<svg width="16" height="20" viewBox="0 0 16 20" style="vertical-align:-4px" aria-label="Partager"><path d="M8 1v12M4 5l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 8H2v11h12V8h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+  return `<div class="row" style="gap:12px;align-items:center;margin:8px 0"><img src="/icons/apple-touch-icon.png" alt="" width="56" height="56" style="border-radius:13px;flex:none"><div style="flex:1 1 200px"><b>${label}</b><div class="small muted">L'icône esprit mode apparaîtra sur votre écran d'accueil.</div></div></div>
+    <button type="button" class="${_installEvt ? '' : 'hidden'}" data-install-android>Installer l'application</button>
+    ${ios ? `<ol class="small" style="padding-left:18px;margin:8px 0"><li>Ouvrez cette page dans <b>Safari</b>.</li><li>Touchez le bouton <b>Partager</b> ${shareIcon} en bas de l'écran.</li><li>Choisissez <b>« Sur l'écran d'accueil »</b>, puis <b>Ajouter</b>.</li></ol>`
+      : `<p class="small muted" data-android-help>Si le bouton n'apparaît pas : dans Chrome, touchez le menu ⋮ puis <b>« Installer l'application »</b> ou <b>« Ajouter à l'écran d'accueil »</b>.</p>`}`;
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-install-android]'); if (!b || !_installEvt) return;
+  _installEvt.prompt(); try { await _installEvt.userChoice; } catch (err) {} _installEvt = null; b.classList.add('hidden');
+});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

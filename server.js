@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -269,6 +269,16 @@ app.get('/api/public/social-qr/:network', async (req, res) => {
 });
 app.get('/api/public/app-qr', async (req, res) => {
   try { res.type('png').send(await QRCode.toBuffer(baseUrl(req) + '/', { width: 520, margin: 2 })); } catch (e) { res.status(500).end(); }
+});
+// Manifeste personnel : l'icône installée depuis la carte ouvre directement la carte de la cliente
+app.get('/api/public/manifest/:token', (req, res) => {
+  const c = db.customers.find(x => x.public_token === req.params.token && !x.deleted);
+  const icons = [{ src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' }, { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }];
+  res.set('Content-Type', 'application/manifest+json; charset=utf-8').send(JSON.stringify({
+    name: 'esprit mode', short_name: 'esprit mode', description: 'Ma carte de fidélité esprit mode', id: '/carte',
+    start_url: c ? `/carte.html?token=${encodeURIComponent(c.public_token)}` : '/', scope: '/', display: 'standalone',
+    background_color: '#465157', theme_color: '#465157', icons }));
 });
 app.get('/api/public/qr/:token', async (req, res) => {
   const c = db.customers.find(x => x.public_token === req.params.token && !x.deleted); if (!c) return res.status(404).end();
