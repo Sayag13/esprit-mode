@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-title" content="esprit mode"><meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="/manifest-equipe.json">
 
-<link rel="stylesheet" href="style.css"><title>Administration — esprit mode</title></head>
+<link rel="stylesheet" href="style.css"><title>Administration — esprit mode</title><style>.phones{display:flex;gap:22px;justify-content:center;flex-wrap:wrap;margin-top:10px}.phones figure{margin:0;text-align:center}.phone{width:300px;height:610px;border:11px solid #2f383d;border-radius:38px;overflow:hidden;background:#f7f3ee;box-shadow:0 14px 34px #29323740;position:relative}.phone::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);width:110px;height:20px;background:#2f383d;border-radius:0 0 14px 14px;z-index:2}.phone iframe{width:100%;height:100%;border:0;display:block}.phones figcaption{font-size:14px;margin-top:8px;color:var(--muted)}.phones figcaption a{color:var(--ink)}</style></head>
 <body>
 <header class="top"><span class="brand">esprit mode<small>administration</small></span><nav id="nav"></nav></header>
 <main>
@@ -61,6 +61,13 @@
     <div id="sigPrev" style="background:#f7f3ee;border:1px dashed var(--line);border-radius:12px;min-height:90px;display:flex;align-items:center;justify-content:center;margin:8px 0"><span class="small muted">Aucune signature</span></div>
     <input type="file" id="sigFile" accept="image/*">
     <div class="row" style="margin-top:8px"><button type="button" class="small auto" id="sigSave" disabled>Enregistrer cette signature</button><button type="button" class="small secondary auto" id="sigDel">Supprimer la signature</button></div>
+  </div>
+  <div class="card"><h2>L'application vue par vos clientes</h2>
+    <p class="small muted">Aperçu en direct, comme sur un téléphone. La carte montrée est un exemple avec une cliente fictive (aucune donnée réelle).</p>
+    <div class="phones">
+      <figure><div class="phone"><iframe src="/" title="Page d'accueil" loading="lazy"></iframe></div><figcaption>Page d'accueil (inscription)<br><a href="/" target="_blank" rel="noopener">Ouvrir en grand</a></figcaption></figure>
+      <figure><div class="phone"><iframe src="/carte.html?demo=1" title="Carte de fidélité (exemple)" loading="lazy"></iframe></div><figcaption>Carte d'une cliente (exemple)<br><a href="/carte.html?demo=1" target="_blank" rel="noopener">Ouvrir en grand</a></figcaption></figure>
+    </div>
   </div>
   <div class="card"><h2>Affiche et import</h2>
     <div class="row" style="align-items:center;gap:14px;margin:6px 0 12px">

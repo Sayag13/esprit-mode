@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.2.4';
+const VERSION = '1.3.0';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -245,7 +245,7 @@ async function bootstrap() {
 /* ======================= Middlewares ======================= */
 
 app.use((req, res, next) => {
-  res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin' });
+  res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN', 'Referrer-Policy': 'same-origin' });
   next();
 });
 app.use((req, res, next) => { const h = String((req.get && req.get('host')) || ''); if (!process.env.PUBLIC_URL && h && !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(h)) LAST_BASE = `${req.protocol}://${h}`; next(); });
@@ -340,6 +340,36 @@ function customerByToken(token) {
   if (!c) bad('Carte introuvable', 404);
   return c;
 }
+/* ---- Retrouver sa carte (lien perdu, icône qui pointe vers une ancienne carte) : code à 6 chiffres envoyé par e-mail ---- */
+const recoverCodes = new Map();
+app.post('/api/public/recover', async (req, res) => {
+  try {
+    const phone = normPhone((req.body || {}).phone);
+    if (!validPhone(phone)) bad('Numéro de téléphone invalide.');
+    if (limited('rec-ip:' + req.ip, 8, 3600000) || limited('rec-ph:' + phone, 3, 3600000)) bad('Trop de demandes. Réessayez dans une heure ou demandez votre lien en boutique.', 429);
+    const c = liveCustomers().find(x => x.phone === phone);
+    if (c && c.email && brevoReady() && emailsLeft() > 0) {
+      const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+      recoverCodes.set(phone, { h: sha(code + phone), exp: Date.now() + 15 * 60000, tries: 0 });
+      try {
+        await brevoSend(c, 'Votre code esprit mode : ' + code, mailLayout(c, `<p>Bonjour ${eH(c.first_name)},</p><p>Voici votre code pour retrouver votre carte de fidélité sur votre téléphone :</p><p style="font-size:30px;letter-spacing:6px;font-weight:bold;color:#465157">${code}</p><p style="font-size:13px;color:#697177">Ce code est valable 15 minutes. Si vous n'avez rien demandé, ignorez cet e-mail.</p>`, false));
+        const k = todayKey(); db.email_log = { [k]: (Number(db.email_log[k]) || 0) + 1 }; persist().catch(() => {});
+      } catch (e) { console.error('Code de récupération :', e.message); }
+    }
+    // Réponse identique dans tous les cas (ne révèle pas si le numéro est inscrit)
+    res.json({ ok: true });
+  } catch (e) { if (e instanceof HttpError) res.status(e.status).json({ error: e.message }); else res.status(500).json({ error: 'Erreur' }); }
+});
+app.post('/api/public/recover/verify', (req, res) => {
+  const phone = normPhone((req.body || {}).phone), code = String((req.body || {}).code || '').replace(/\D/g, '');
+  const r = recoverCodes.get(phone);
+  if (!r || r.exp < Date.now()) return res.status(400).json({ error: 'Code expiré : demandez un nouveau code.' });
+  if (++r.tries > 5) { recoverCodes.delete(phone); return res.status(429).json({ error: 'Trop d’essais : demandez un nouveau code.' }); }
+  if (sha(code + phone) !== r.h) return res.status(400).json({ error: 'Code incorrect.' });
+  recoverCodes.delete(phone);
+  const c = liveCustomers().find(x => x.phone === phone); if (!c) return res.status(404).json({ error: 'Carte introuvable' });
+  res.json({ token: c.public_token });
+});
 app.get('/api/public/customer/token/:token', read(req => {
   const c = customerByToken(req.params.token);
   return {

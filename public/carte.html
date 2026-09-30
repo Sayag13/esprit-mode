@@ -22,14 +22,58 @@
 <script src="app.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
-const token = params.get('token');
-if (token) { const l = document.createElement('link'); l.rel = 'manifest'; l.href = '/api/public/manifest/' + encodeURIComponent(token); document.head.appendChild(l); try { localStorage.setItem('card_token', token); } catch (e) {} }
+const DEMO = params.get('demo') === '1'; // aperçu avec une cliente fictive (pour l'Administration)
+let saved = null; try { saved = localStorage.getItem('card_token'); } catch (e) {}
+const token = DEMO ? 'demo' : (params.get('token') || saved);
+if (token && !DEMO) { const l = document.createElement('link'); l.rel = 'manifest'; l.href = '/api/public/manifest/' + encodeURIComponent(token); document.head.appendChild(l); }
 let D = null;
 async function load() {
-  if (!token) { $('app').innerHTML = '<div class="card"><h2>Carte introuvable</h2><p>Ouvrez le lien personnel de votre carte, ou demandez-le en boutique.</p></div>'; return; }
+  if (DEMO) { D = demoData(); try { localStorage.setItem('pts_demo', String(D.customer.points - 45)); } catch (e) {} render(); return; }
+  if (!token) { recoverView(); return; }
   try { D = await api('/api/public/customer/token/' + encodeURIComponent(token)); }
-  catch (e) { $('app').innerHTML = `<div class="card"><h2>${esc(e.message)}</h2><p>Demandez votre lien en boutique.</p></div>`; return; }
+  catch (e) {
+    // L'icône peut pointer vers une ancienne carte : on essaie la carte enregistrée sur ce téléphone
+    if (saved && saved !== token) { location.replace('/carte.html?token=' + encodeURIComponent(saved)); return; }
+    if (/introuvable/i.test(e.message)) { try { if (saved === token) localStorage.removeItem('card_token'); } catch (x) {} recoverView(); }
+    else $('app').innerHTML = `<div class="card"><h2>${esc(e.message)}</h2><p>Vérifiez votre connexion internet puis rouvrez l'application.</p></div>`;
+    return;
+  }
+  try { localStorage.setItem('card_token', token); } catch (e) {}
   render();
+}
+function demoData() {
+  const d = n => new Date(Date.now() - n * 86400000).toISOString();
+  return { customer: { first_name: 'Sophie', last_name: 'Martin', phone: '0600000000', email: 'sophie@exemple.fr', birth_date: '', address: '', postal_code: '', city: '', marketing_email: true, marketing_sms: false, points: 185 },
+    rule: { threshold: 300, voucher_value: 30, validity_days: 365, conditions: "Bon d'achat valable dans les deux boutiques esprit mode, en une seule fois." },
+    vouchers: [{ status: 'active', value: 30, expires_at: new Date(Date.now() + 240 * 86400000).toISOString() }], redemptions: [],
+    history: [{ created_at: d(2), amount: 45, points: 45 }, { created_at: d(21), amount: 89.9, points: 89 }, { created_at: d(47), amount: 51, points: 51 }] };
+}
+function recoverView() {
+  $('app').innerHTML = `<div class="card"><h2>Retrouver ma carte</h2>
+    <p>Votre carte n'a pas été trouvée sur ce téléphone. Indiquez votre numéro : vous recevrez un code par e-mail pour l'ouvrir ici.</p>
+    <div id="rs1"><input id="rph" type="tel" inputmode="tel" placeholder="Votre numéro de téléphone" autocomplete="tel"><button id="rbtn">Recevoir mon code</button></div>
+    <div id="rs2" class="hidden"><p class="ok small" id="rinfo"></p><input id="rcode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="Code à 6 chiffres"><button id="rok">Ouvrir ma carte</button>
+      <p class="small"><a href="#" id="ragain">Renvoyer un code</a></p></div>
+    <div id="rmsg"></div>
+    <p class="small muted">Pas encore de carte ? <a href="/">Créez-la gratuitement</a>. Pas d'adresse e-mail sur votre carte ? Demandez votre lien en boutique.</p></div>`;
+  const msg = (t, ok) => { $('rmsg').className = ok ? 'ok' : 'err'; $('rmsg').textContent = t; };
+  async function ask() {
+    $('rbtn').disabled = true; msg('', true);
+    try { await api('/api/public/recover', { method: 'POST', body: { phone: $('rph').value } });
+      $('rs1').classList.add('hidden'); $('rs2').classList.remove('hidden');
+      $('rinfo').textContent = "Si ce numéro est inscrit avec une adresse e-mail, un code vient d'y être envoyé (pensez à regarder dans les courriers indésirables)."; $('rcode').focus(); }
+    catch (e) { msg(e.message); }
+    $('rbtn').disabled = false;
+  }
+  $('rbtn').addEventListener('click', ask);
+  $('ragain').addEventListener('click', e => { e.preventDefault(); $('rs2').classList.add('hidden'); $('rs1').classList.remove('hidden'); });
+  $('rok').addEventListener('click', async () => {
+    $('rok').disabled = true;
+    try { const r = await api('/api/public/recover/verify', { method: 'POST', body: { phone: $('rph').value, code: $('rcode').value } });
+      try { localStorage.setItem('card_token', r.token); } catch (e) {}
+      location.replace('/carte.html?token=' + encodeURIComponent(r.token)); }
+    catch (e) { msg(e.message); $('rok').disabled = false; }
+  });
 }
 function render() {
   const c = D.customer, R = D.rule, left = Math.max(0, R.threshold - c.points), pct = Math.min(100, Math.round(c.points / R.threshold * 100));
@@ -37,6 +81,7 @@ function render() {
   let prevPts = null; try { const v = localStorage.getItem('pts_' + token); if (v !== null) prevPts = Number(v); localStorage.setItem('pts_' + token, String(c.points)); } catch (e) {}
   const newStamps = prevPts != null && prevPts < c.points ? Math.min(300, c.points) - Math.min(300, prevPts) : 0;
   $('app').innerHTML = `
+  ${DEMO ? '<p class="warn small" style="text-align:center">Aperçu avec une cliente fictive</p>' : ''}
   ${params.get('bienvenue') && !isStandalone() ? `<div class="card" style="border-color:#cfe1cf"><p class="ok" style="margin:0 0 8px"><b>Bienvenue chez esprit mode !</b> Votre carte est créée.</p>${installBox('Dernière étape : installez votre carte')}</div>` : ''}
   ${D.special_day ? `<p class="ok" style="margin:10px 0">${esc(D.special_day.label)} : vos points sont multipliés par ${D.special_day.multiplier} aujourd'hui !</p>` : ''}
   <div class="loyalty"><div class="b">esprit mode${D.level ? ` · <span style="letter-spacing:.08em">${esc(D.level.name)}</span>` : ''}</div><h1>${esc(c.first_name)} ${esc(c.last_name)}</h1>
@@ -52,7 +97,7 @@ function render() {
     ${(D.redemptions || []).map(r => `<div class="item small"><span>Récompense de ${euros0(r.value)}</span><span class="muted">utilisée le ${fdate(r.created_at)}</span></div>`).join('')}
     ${R.conditions ? `<p class="small muted">${esc(R.conditions)}</p>` : ''}</div>
   <div id="content"></div>
-  <div class="card qrwrap"><h2>Mon QR code</h2><img class="qr" src="/api/public/qr/${encodeURIComponent(token)}" alt="QR code de ma carte"><p class="small muted">En caisse, donnez votre numéro de téléphone ou montrez ce QR code.</p></div>
+  <div class="card qrwrap"><h2>Mon QR code</h2>${DEMO ? '<img class="qr" src="/api/public/app-qr" alt="QR code (exemple)">' : `<img class="qr" src="/api/public/qr/${encodeURIComponent(token)}" alt="QR code de ma carte">`}<p class="small muted">En caisse, donnez votre numéro de téléphone ou montrez ce QR code.</p></div>
   <div class="card"><h2>Mes achats</h2>${D.history.map(x => `<div class="item"><span>${fdate(x.created_at)}</span><span>${money(x.amount)} · +${x.points} pts</span></div>`).join('') || '<p class="muted">Aucun achat enregistré.</p>'}</div>
   <div class="card" id="installCard"><h2>Ma carte sur mon téléphone</h2>${installBox('Installez votre carte esprit mode')}<p class="small muted">Ce lien est personnel : ne le partagez pas.</p></div>
   <form class="card" id="edit" novalidate><h2>Mes coordonnées</h2>
@@ -77,7 +122,7 @@ function render() {
   loadContent();
 }
 async function save(e) {
-  e.preventDefault(); $('saveBtn').disabled = true;
+  e.preventDefault(); if (DEMO) { toast('Aperçu : exemple non modifiable'); return; } $('saveBtn').disabled = true;
   try {
     await api('/api/public/customer/token/' + encodeURIComponent(token), { method: 'PUT', body: { first_name: $('efn').value, last_name: $('eln').value, phone: $('eph').value, email: $('eem').value,
       birth_date: $('ebd').value, address: $('ead').value, postal_code: $('epc').value, city: $('eci').value, marketing_email: $('eme').checked, marketing_sms: $('ems').checked } });
@@ -94,6 +139,7 @@ async function loadContent() {
   $('content').innerHTML = h;
 }
 function askDelete() {
+  if (DEMO) { toast('Aperçu : exemple non modifiable'); return; }
   $('delZone').innerHTML = `<p class="warn">Votre carte, vos points et vos bons seront supprimés. Confirmez-vous ?</p><div class="row"><button class="danger" id="delYes">Oui, supprimer mon compte</button><button class="secondary" id="delNo">Annuler</button></div>`;
   $('delNo').addEventListener('click', render);
   $('delYes').addEventListener('click', async () => { try { await api('/api/public/customer/token/' + encodeURIComponent(token) + '/delete-request', { method: 'POST' }); await load(); } catch (e) { toast(e.message, true); } });
