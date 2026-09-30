@@ -18,7 +18,7 @@
     <input id="q" type="search" placeholder="Nom, prénom, téléphone, e-mail" autocomplete="off">
     <div id="list"></div>
     <h3>Exports</h3>
-    <div class="row"><button class="secondary small" id="expC">Exporter les clientes (CSV)</button><button class="secondary small" id="expP">Exporter les achats (CSV)</button></div>
+    <div class="row"><button class="secondary small" id="expC">Exporter les clientes (CSV)</button><button class="secondary small" id="expP">Exporter les achats (CSV)</button><button class="secondary small" id="expG">Exporter les chèques cadeaux et avoirs (CSV)</button></div>
   </div>
 
   <form class="card" id="rule" novalidate><h2>Règle de fidélité</h2>
@@ -78,6 +78,7 @@
     <p class="small muted">Efface tous les <b>achats</b>, <b>bons d'achat</b> et <b>ajustements de points</b> faits pendant les essais, et remet les points des clientes à 0. L'équipe, les mots de passe et la règle de fidélité sont conservés. <b>Action définitive.</b></p>
     <label class="check"><input type="checkbox" id="rzCamp"> <span>Effacer aussi les campagnes de test</span></label>
     <label class="check"><input type="checkbox" id="rzCust"> <span>Effacer aussi toutes les clientes</span></label>
+    <label class="check"><input type="checkbox" id="rzGift"> <span>Effacer aussi les chèques cadeaux et avoirs de test</span></label>
     <div class="row"><input id="rzConfirm" placeholder="Tapez EFFACER pour confirmer" autocomplete="off"><button type="button" class="danger small auto" id="rzBtn">Remettre à zéro</button></div>
     <div id="rzMsg"></div></div>
   <div class="card"><h2>Journal des actions sensibles</h2><div id="audit" class="small">Chargement…</div></div>
@@ -142,7 +143,7 @@ async function dashboard() {
   try {
     const d = await api('/api/dashboard');
     const k = (v, l) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`;
-    $('dash').innerHTML = k(d.customers, 'clientes') + k(d.new_month, 'nouvelles ce mois') + k(money(d.ca_today), 'CA du jour') + k(money(d.ca_week), 'CA de la semaine') + k(money(d.ca_month), 'CA du mois') + k(d.birthdays_week || 0, 'anniversaires cette semaine') +
+    $('dash').innerHTML = k(d.customers, 'clientes') + k(d.new_month, 'nouvelles ce mois') + k(money(d.ca_today), 'CA du jour') + k(money(d.ca_week), 'CA de la semaine') + k(money(d.ca_month), 'CA du mois') + k(d.gifts_active || 0, 'chèques / avoirs en cours') + k(money(d.gifts_outstanding || 0), 'restant à utiliser (chèques / avoirs)') + k(d.birthdays_week || 0, 'anniversaires cette semaine') +
       k(d.sales_month ? money(d.ca_month / d.sales_month) : '—', 'panier moyen du mois') + k(d.active_90, 'actives (90 jours)');
     if (d.by_store && d.by_store.length) $('dash').innerHTML += d.by_store.map(r => k(money(r.ca_month), 'CA du mois — ' + esc(r.store) + ' (' + r.sales_month + ' achats)')).join('');
     $('fid').innerHTML = `<h2>Fidélité</h2><div class="grid">${k(d.points_distributed, 'points distribués')}${k(d.vouchers_created, 'bons créés')}${k(d.vouchers_used, 'bons utilisés')}${k(d.vouchers_active, 'bons en cours')}${k(d.vouchers_expired, 'bons expirés')}${k(d.near_reward, 'proches de la carte pleine')}</div>`;
@@ -167,6 +168,7 @@ document.addEventListener('click', async e => {
   try { await api('/api/customers/' + b.dataset.del, { method: 'DELETE' }); toast('Fiche supprimée'); search(); dashboard(); auditLog(); } catch (err) { toast(err.message, true); }
 });
 $('expC').addEventListener('click', () => download('/api/export/customers.csv', 'esprit-mode-clientes.csv').catch(e => toast(e.message, true)));
+$('expG').addEventListener('click', () => download('/api/export/gifts.csv', 'esprit-mode-cheques-cadeaux-avoirs.csv').catch(e => toast(e.message, true)));
 $('expP').addEventListener('click', () => download('/api/export/purchases.csv', 'esprit-mode-achats.csv').catch(e => toast(e.message, true)));
 
 async function settings() {
@@ -206,8 +208,8 @@ $('newUser').addEventListener('submit', async e => {
 $('rzBtn').addEventListener('click', async () => {
   if ($('rzConfirm').value.trim() !== 'EFFACER') { $('rzMsg').className = 'err'; $('rzMsg').textContent = 'Tapez EFFACER en majuscules dans la case pour confirmer.'; return; }
   if (!confirm('Effacer définitivement les achats et les bons d\'essai ?')) return;
-  try { const n = await api('/api/admin/reset', { method: 'POST', body: { confirm: 'EFFACER', campaigns: $('rzCamp').checked, customers: $('rzCust').checked } });
-    $('rzMsg').className = 'ok'; $('rzMsg').textContent = `Remise à zéro faite : ${n.achats} achat(s) et ${n.bons} bon(s) effacés${n.campagnes !== undefined ? ', ' + n.campagnes + ' campagne(s)' : ''}${n.clientes !== undefined ? ', ' + n.clientes + ' cliente(s)' : ''}.`;
+  try { const n = await api('/api/admin/reset', { method: 'POST', body: { confirm: 'EFFACER', campaigns: $('rzCamp').checked, customers: $('rzCust').checked, gifts: $('rzGift').checked } });
+    $('rzMsg').className = 'ok'; $('rzMsg').textContent = `Remise à zéro faite : ${n.achats} achat(s) et ${n.bons} bon(s) effacés${n.campagnes !== undefined ? ', ' + n.campagnes + ' campagne(s)' : ''}${n.clientes !== undefined ? ', ' + n.clientes + ' cliente(s)' : ''}${n.cheques !== undefined ? ', ' + n.cheques + ' chèque(s)' : ''}.`;
     $('rzConfirm').value = ''; dashboard(); search(); auditLog(); }
   catch (err) { $('rzMsg').className = 'err'; $('rzMsg').textContent = err.message; }
 });

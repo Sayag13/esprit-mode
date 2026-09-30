@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="esprit mode"><meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="/manifest-equipe.json">
+<link rel="stylesheet" href="style.css"><title>Chèques cadeaux et avoirs — esprit mode</title>
+<style>
+.seg{display:flex;gap:6px;margin-bottom:10px}.seg label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);border-radius:12px;padding:10px;cursor:pointer;font-weight:600;background:#fff}
+.seg input{width:auto;margin:0}.seg label:has(input:checked){background:var(--ink);color:#fff;border-color:var(--ink)}
+.giftbox{border:1px solid var(--line);border-radius:14px;padding:14px;background:#fffdf9;margin-top:10px}
+.giftbox .big{font-size:30px;font-weight:700;color:var(--ink)}
+.lnk{display:inline-block;background:var(--ink);color:#fff;border-radius:10px;padding:9px 12px;text-decoration:none;font-size:14px;margin:3px}
+</style></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small>chèques cadeaux</small></span><nav id="nav"></nav></header>
+<main class="narrow">
+  <!-- Encaisser -->
+  <div class="card" id="useCard">
+    <h2>Encaisser un chèque cadeau ou un avoir</h2>
+    <div class="row"><input id="lk" placeholder="N° (ex. 0012 ou A-0003) ou code EM-XXXX-XXXX" autocomplete="off" autocapitalize="characters"><button type="button" class="small auto" id="lkBtn">Rechercher</button><button type="button" class="small secondary auto" id="scanBtn">Scanner</button></div>
+    <div id="scanBox" class="hidden" style="margin-top:8px"><video id="scanVideo" playsinline muted style="width:100%;border-radius:12px;background:#000"></video>
+      <p class="small muted">Visez le QR code du chèque (sur papier ou sur le téléphone de la cliente).</p><button type="button" class="small secondary" id="scanStop">Fermer la caméra</button></div>
+    <div id="found"></div>
+  </div>
+
+  <!-- Créer -->
+  <form class="card" id="newForm" novalidate>
+    <h2>Créer un chèque cadeau ou un avoir</h2>
+    <div class="seg"><label><input type="radio" name="kind" value="cadeau" checked> Chèque cadeau</label><label><input type="radio" name="kind" value="avoir"> Avoir</label></div>
+    <div class="row"><label class="field">Montant (€) *<input id="amt" inputmode="decimal" placeholder="ex. 50"></label><label class="field">Valable jusqu'au *<input id="exp" type="date"></label></div>
+    <label class="field" id="recLbl">Pour (la personne qui le reçoit)<input id="rec" placeholder="ex. Sophie"></label>
+    <label class="field" id="fromLbl">De la part de<input id="from" placeholder="ex. Julie et Marc"></label>
+    <label class="field hidden" id="noteLbl">Motif<input id="note" placeholder="ex. Retour d'un article"></label>
+    <label class="field">E-mail pour l'envoyer (facultatif)<input id="em" type="email" placeholder="adresse de l'acheteuse ou de la personne qui le reçoit"></label>
+    <p class="small muted" id="kindHelp">Le chèque est numéroté automatiquement. L'acheteuse peut le recevoir par e-mail, SMS ou WhatsApp et le transférer à la personne à qui elle l'offre, ou vous pouvez l'imprimer.</p>
+    <button id="createBtn">Créer</button><div id="msg"></div>
+  </form>
+  <div id="created"></div>
+
+  <!-- Liste -->
+  <div class="card">
+    <h2>Chèques et avoirs émis</h2>
+    <div class="row"><input id="q" type="search" placeholder="N°, code, nom…"><select id="st" class="auto" style="width:auto"><option value="">Tous</option><option value="active" selected>En cours</option><option value="used">Utilisés</option><option value="expired">Expirés</option><option value="cancelled">Annulés</option></select></div>
+    <div id="list"><p class="muted">Chargement…</p></div>
+  </div>
+</main>
+<script src="app.js"></script>
+<script>
+let ME = null, CURG = null, stopScan = null;
+const KIND = () => document.querySelector('[name=kind]:checked').value;
+const ST = { active: ['en cours', 'ok'], used: ['utilisé', ''], expired: ['expiré', 'bad'], cancelled: ['annulé', 'bad'] };
+function defaultExp() { const d = new Date(); const e = new Date(d.getFullYear() + 1, d.getMonth() + 1, 0); return e.toLocaleDateString('fr-CA'); }
+$('exp').value = defaultExp();
+function syncKind() {
+  const av = KIND() === 'avoir';
+  $('recLbl').firstChild.textContent = av ? "Au nom de (la cliente) *" : 'Pour (la personne qui le reçoit)';
+  $('fromLbl').classList.toggle('hidden', av); $('noteLbl').classList.toggle('hidden', !av);
+  $('kindHelp').textContent = av ? "L'avoir est numéroté automatiquement (A-0001, A-0002…). Il remplace le remboursement lors d'un retour." : "Le chèque est numéroté automatiquement. L'acheteuse peut le recevoir par e-mail, SMS ou WhatsApp et le transférer à la personne à qui elle l'offre, ou vous pouvez l'imprimer.";
+}
+document.querySelectorAll('[name=kind]').forEach(r => r.addEventListener('change', syncKind));
+(async () => { ME = await staffNav('cheques'); if (!ME) return; loadList(); const t = new URLSearchParams(location.search).get('t'); if (t) lookup('t=' + t); })();
+
+function shareButtons(g) {
+  const text = g.kind === 'avoir' ? `Bonjour, voici votre avoir esprit mode n° ${g.number_label} de ${euros0(g.amount)} : ${g.url}` :
+    `Voici un chèque cadeau esprit mode de ${euros0(g.amount)}${g.recipient ? ' pour ' + g.recipient : ''}${g.from_name ? ' de la part de ' + g.from_name : ''} : ${g.url}`;
+  return `<div class="row" style="gap:4px;flex-wrap:wrap"><a class="lnk" href="${esc(g.url)}" target="_blank" rel="noopener">Voir / imprimer</a>
+    <a class="lnk" href="sms:?&body=${encodeURIComponent(text)}">SMS</a><a class="lnk" href="https://wa.me/?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">WhatsApp</a>
+    <button type="button" class="small secondary auto" data-copy-text="${esc(g.url)}">Copier le lien</button></div>
+    <div class="row" style="margin-top:6px"><input type="email" id="mail_${g.id}" value="${esc(g.email || '')}" placeholder="E-mail"><button type="button" class="small auto" data-mail="${g.id}">Envoyer par e-mail</button></div>
+    ${g.email_sent_at ? `<p class="small ok">E-mail envoyé le ${fdt(g.email_sent_at)}.</p>` : ''}`;
+}
+function giftBox(g, withUse) {
+  const [lab, cls] = ST[g.status];
+  return `<div class="giftbox"><div class="row" style="justify-content:space-between"><div><b>${esc(g.kind_label)} n° ${esc(g.number_label)}</b> <span class="tag ${cls}">${lab}</span><div class="small muted">code ${esc(g.code)} · créé le ${fdate(g.created_at)} par ${esc(g.created_by)}</div></div>
+    <div style="text-align:right"><div class="big">${money(g.balance)}</div><div class="small muted">${g.balance < g.amount ? 'restant sur ' + money(g.amount) : 'disponible'}</div></div></div>
+    <p class="small">${g.kind === 'avoir' ? `Au nom de <b>${esc(g.recipient)}</b>${g.note ? ' · ' + esc(g.note) : ''}` : `${g.recipient ? `Pour <b>${esc(g.recipient)}</b>` : ''}${g.from_name ? ` · de la part de <b>${esc(g.from_name)}</b>` : ''}`} · valable jusqu'au <b>${fdate(g.expires_at)}</b></p>
+    ${(g.uses || []).length ? `<p class="small muted">Utilisations : ${g.uses.map(u => `${fdate(u.at)} ${money(u.amount)}${u.store ? ' (' + esc(u.store) + ')' : ''}`).join(' · ')}</p>` : ''}
+    ${withUse && g.status === 'active' ? `<div class="row" style="margin-top:8px"><label class="field" style="margin:0">Montant à déduire (€)<input id="useAmt" inputmode="decimal" value="${String(g.balance).replace('.', ',')}"></label><button type="button" class="auto" id="useBtn" style="align-self:flex-end">Déduire</button></div>` : ''}
+    ${shareButtons(g)}
+    ${ME && ME.role !== 'seller' && g.status === 'active' ? `<button type="button" class="small danger" data-cancel="${g.id}" style="margin-top:8px">Annuler ce ${g.kind === 'avoir' ? 'avoir' : 'chèque'}</button>` : ''}</div>`;
+}
+async function lookup(v) {
+  const q = v || $('lk').value.trim(); if (!q) return;
+  try { CURG = await api('/api/gifts/lookup/' + encodeURIComponent(q)); showFound(); }
+  catch (e) { $('found').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+function showFound() {
+  $('found').innerHTML = giftBox(CURG, true);
+  const b = $('useBtn'); if (b) b.addEventListener('click', useGift);
+}
+async function useGift() {
+  const b = $('useBtn'); b.disabled = true;
+  let store = ''; try { store = localStorage.getItem('store') || ''; } catch (e) {}
+  try { CURG = await api('/api/gifts/' + CURG.id + '/use', { method: 'POST', body: { amount: $('useAmt').value, store } });
+    toast(CURG.status === 'used' ? 'Chèque entièrement utilisé' : 'Déduit — il reste ' + money(CURG.balance)); showFound(); loadList(); }
+  catch (e) { toast(e.message, true); b.disabled = false; }
+}
+$('lkBtn').addEventListener('click', () => lookup());
+$('lk').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); lookup(); } });
+$('scanBtn').addEventListener('click', async () => {
+  $('scanBox').classList.remove('hidden');
+  try { stopScan = await startQrScan($('scanVideo'), txt => { $('scanBox').classList.add('hidden'); const m = txt.match(/t=([a-f0-9]{20,})/i); if (m) lookup('t=' + m[1]); else toast("Ce QR code n'est pas un chèque esprit mode.", true); }); }
+  catch (e) { $('scanBox').classList.add('hidden'); toast("Caméra indisponible : tapez le numéro du chèque.", true); }
+});
+$('scanStop').addEventListener('click', () => { if (stopScan) stopScan(); $('scanBox').classList.add('hidden'); });
+
+$('newForm').addEventListener('submit', async e => {
+  e.preventDefault(); const b = $('createBtn'); b.disabled = true; $('msg').className = ''; $('msg').textContent = '';
+  let store = ''; try { store = localStorage.getItem('store') || ''; } catch (err) {}
+  try {
+    const g = await api('/api/gifts', { method: 'POST', body: { kind: KIND(), amount: $('amt').value, expires_on: $('exp').value, recipient: $('rec').value, from_name: $('from').value, note: $('note').value, email: $('em').value, store } });
+    ['amt', 'rec', 'from', 'note', 'em'].forEach(i => $(i).value = ''); $('exp').value = defaultExp();
+    $('created').innerHTML = `<div class="card"><p class="ok" style="margin:0"><b>${esc(g.kind_label)} n° ${esc(g.number_label)} créé.</b> Envoyez-le ou imprimez-le :</p>${giftBox(g, false)}</div>`;
+    $('created').scrollIntoView({ behavior: 'smooth' }); loadList();
+  } catch (err) { $('msg').className = 'err'; $('msg').textContent = err.message; }
+  b.disabled = false;
+});
+
+let lt = null;
+$('q').addEventListener('input', () => { clearTimeout(lt); lt = setTimeout(loadList, 250); });
+$('st').addEventListener('change', loadList);
+async function loadList() {
+  try {
+    const a = await api(`/api/gifts?q=${encodeURIComponent($('q').value.trim())}&status=${$('st').value}`);
+    $('list').innerHTML = a.map(g => `<div class="item"><div><div class="name">${esc(g.kind_label)} n° ${esc(g.number_label)} · ${money(g.balance)}${g.balance < g.amount ? ` <span class="small muted">/ ${money(g.amount)}</span>` : ''}</div>
+      <div class="small muted">${esc(g.recipient || '—')}${g.from_name ? ' · de ' + esc(g.from_name) : ''} · jusqu'au ${fdate(g.expires_at)} <span class="tag ${ST[g.status][1]}">${ST[g.status][0]}</span></div></div>
+      <button type="button" class="small secondary auto" data-show="${esc(g.number_label)}">Ouvrir</button></div>`).join('') || '<p class="muted">Aucun chèque.</p>';
+  } catch (e) { $('list').innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+document.addEventListener('click', async e => {
+  const s = e.target.closest('[data-show]'); if (s) { $('lk').value = s.dataset.show; await lookup(); $('useCard').scrollIntoView({ behavior: 'smooth' }); return; }
+  const m = e.target.closest('[data-mail]');
+  if (m) { m.disabled = true; try { const g = await api('/api/gifts/' + m.dataset.mail + '/email', { method: 'POST', body: { email: $('mail_' + m.dataset.mail).value } }); toast('E-mail envoyé à ' + g.email); if (CURG && CURG.id === g.id) { CURG = g; showFound(); } loadList(); } catch (err) { toast(err.message, true); } m.disabled = false; return; }
+  const c = e.target.closest('[data-cancel]');
+  if (c) { if (!confirm('Annuler définitivement ce chèque ?')) return; try { const g = await api('/api/gifts/' + c.dataset.cancel + '/cancel', { method: 'POST' }); toast('Annulé'); if (CURG && CURG.id === g.id) { CURG = g; showFound(); } loadList(); } catch (err) { toast(err.message, true); } }
+});
+</script>
+</body></html>

@@ -69,7 +69,9 @@ async function openClient(id, justCreated) {
   CUR.justCreated = !!justCreated; $('newCard').classList.add('hidden'); showClient();
 }
 function preview() {
-  const a = Number(String($('amount')?.value || '').replace(',', '.'));
+  const paid = Number(String($('amount')?.value || '').replace(',', '.')) || 0;
+  if ($('allExcl')?.checked) $('excl').value = $('amount').value;
+  const ex = Math.min(paid, Number(String($('excl')?.value || '').replace(',', '.')) || 0), a = paid - ex;
   const mult = OPT.special_day_enabled ? Number(OPT.special_day_multiplier) || 1 : 1;
   const pts = a > 0 ? Math.floor(a * SET.points_per_euro * mult) : 0, tot = CUR.customer.points + pts;
   $('prev').innerHTML = `<div class="kpi"><b>+${pts}</b><span>points gagnés</span></div><div class="kpi"><b>${tot >= SET.threshold && SET.auto_voucher ? tot % SET.threshold : tot}</b><span>nouveau solde</span></div>` +
@@ -90,6 +92,8 @@ function showClient() {
     ${$('store').value ? '' : '<p class="warn small">Choisissez la boutique en haut (Général de Gaulle ou Clemenceau) : elle est notée sur chaque achat et retenue sur cet appareil.</p>'}
     <form id="buy" novalidate>
       <label class="field">Montant payé (€)<input id="amount" class="big-amount" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
+      <label class="field">Dont articles soldés ou en promotion (€) — sans points<input id="excl" inputmode="decimal" autocomplete="off" placeholder="0,00"></label>
+      <label class="check"><input type="checkbox" id="allExcl"> <span>Tout l'achat est soldé ou en promotion (aucun point)</span></label>
       ${act.length ? '<p class="field">Bons d\'achat disponibles</p>' + act.map(v => `<label class="check"><input type="checkbox" data-v="${v.id}"> <span>Utiliser le bon de ${euros0(v.value)} (jusqu'au ${fdate(v.expires_at)})</span></label>`).join('') : ''}
       <div class="grid" id="prev"></div>
       <button id="buyBtn" style="margin-top:10px">Valider l'achat</button><div id="buyMsg"></div>
@@ -102,7 +106,7 @@ function showClient() {
       <p class="small muted">Envoyez-lui le lien sur son téléphone (conseillé sur iPhone : il s'ouvrira dans Safari), ou faites-lui scanner ce QR code.</p>
       ${cardLinkButtons(c, CUR.card_url)}
       <img class="qr" alt="QR code de la carte" src="/api/public/qr/${encodeURIComponent(CUR.card_url.split('token=')[1] || '')}"></details>`;
-  $('amount').addEventListener('input', preview); preview(); $('amount').focus();
+  $('amount').addEventListener('input', preview); $('excl').addEventListener('input', () => { $('allExcl').checked = false; preview(); }); $('allExcl').addEventListener('change', () => { if (!$('allExcl').checked) $('excl').value = ''; preview(); }); preview(); $('amount').focus();
   $('buy').addEventListener('submit', buy);
   $('closeClient').addEventListener('click', () => { $('clientCard').classList.add('hidden'); CUR = null; $('q').focus(); });
   $('paperBtn').addEventListener('click', paper);
@@ -125,6 +129,7 @@ let scanStream = null, scanTimer = null, detector = null;
 async function loadJsQR() { if (window.jsQR) return; await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js'; s.onload = ok; s.onerror = ko; document.head.appendChild(s); }); }
 function stopScan() { clearInterval(scanTimer); if (scanStream) scanStream.getTracks().forEach(t => t.stop()); scanStream = null; $('scanBox').classList.add('hidden'); }
 async function onCode(text) {
+  const gq = String(text).match(/cheque\.html\?t=([a-f0-9]{20,})/i); if (gq) { stopScan(); location.href = '/cheques.html?t=' + gq[1]; return; }
   const m = String(text).match(/token=([a-f0-9]{20,})/i); if (!m) { toast("Ce QR code n'est pas une carte esprit mode.", true); return; }
   stopScan();
   try { const r = await api('/api/customers/by-token/' + m[1]); await openClient(r.id); } catch (err) { toast(err.message, true); }
@@ -150,9 +155,9 @@ async function buy(e) {
   e.preventDefault(); const b = $('buyBtn'); b.disabled = true; $('buyMsg').className = ''; $('buyMsg').textContent = '';
   try {
     const voucher_ids = [...document.querySelectorAll('[data-v]')].filter(x => x.checked).map(x => Number(x.dataset.v));
-    const r = await api('/api/purchases', { method: 'POST', body: { customer_id: CUR.customer.id, amount: $('amount').value, voucher_ids, store: $('store').value } });
+    const r = await api('/api/purchases', { method: 'POST', body: { customer_id: CUR.customer.id, amount: $('amount').value, excluded_amount: $('excl').value, voucher_ids, store: $('store').value } });
     $('clientCard').innerHTML = `<div class="done"><p class="muted">${esc(r.first_name)} ${esc(r.last_name)}</p><h2>Achat enregistré</h2>
-      <div class="plus">+${r.added} points</div><p>Nouveau solde : <b>${r.points} points</b></p>
+      <div class="plus">+${r.added} points</div>${r.excluded ? `<p class="small muted">dont ${money(r.excluded)} soldés / en promotion, sans points</p>` : ''}<p>Nouveau solde : <b>${r.points} points</b></p>
       ${r.vouchers_used.length ? `<p class="ok">Bon de ${euros0(r.vouchers_used.reduce((n, v) => n + v.value, 0))} utilisé.</p>` : ''}
       ${r.vouchers_created.length ? `<p class="ok" style="font-size:18px"><b>Carte pleine !</b> Bon d'achat de ${euros0(r.vouchers_created.reduce((n, v) => n + v.value, 0))} créé, valable jusqu'au ${fdate(r.vouchers_created[0].expires_at)}.</p>` : ''}
       <button id="nextBtn">Nouvel achat</button></div>`;

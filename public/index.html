@@ -12,6 +12,7 @@
 <body>
 <header class="top"><span class="brand">esprit mode<small>carte de fidélité</small></span></header>
 <main class="narrow">
+  <img class="hero-photo" src="/img/vitrine.jpg" alt="La vitrine de la boutique esprit mode à Maisons-Alfort">
   <section class="hero"><div class="eyebrow">Maisons-Alfort</div><h1>Votre fidélité, autrement.</h1>
     <p class="muted" id="ruleText">1 € dépensé = 1 point. À 300 points, votre carte est pleine : un bon d'achat de 30 € vous est offert, valable un an.</p></section>
 
@@ -66,7 +67,7 @@ $('reg').addEventListener('submit', async e => {
 });
 $('shareBtn').addEventListener('click', () => shareApp($('shareMsg')));
 $('installBox').innerHTML = installBox('Ajoutez esprit mode à votre téléphone');
-$('about').innerHTML = aboutHtml();
+$('about').innerHTML = aboutHtml(true);
 try { const t = localStorage.getItem('card_token'); if (t) { $('myCard').className = 'card'; $('myCard').innerHTML = `<h2>Ma carte</h2><a href="/carte.html?token=${encodeURIComponent(t)}" style="display:block;text-align:center;background:var(--ink);color:#fff;border-radius:12px;padding:13px;text-decoration:none;font-weight:600">Ouvrir ma carte de fidélité</a>`; if (isStandalone()) location.replace('/carte.html?token=' + encodeURIComponent(t)); } } catch (e) {}
 </script>
 </body></html>

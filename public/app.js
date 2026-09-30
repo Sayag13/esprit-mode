@@ -39,7 +39,7 @@ async function logout() { try { await api('/api/logout', { method: 'POST' }); } 
 async function staffNav(current) {
   let me;
   try { me = await api('/api/me'); } catch (e) { return null; }
-  const links = [['vente', '/vente.html', 'Caisse', ['admin', 'manager', 'seller']], ['boutique', '/boutique.html', 'Clientes & communication', ['admin', 'manager']], ['admin', '/admin.html', 'Administration', ['admin']]];
+  const links = [['vente', '/vente.html', 'Caisse', ['admin', 'manager', 'seller']], ['cheques', '/cheques.html', 'Chèques cadeaux', ['admin', 'manager', 'seller']], ['boutique', '/boutique.html', 'Clientes & communication', ['admin', 'manager']], ['admin', '/admin.html', 'Administration', ['admin']]];
   const nav = $('nav');
   if (nav) nav.innerHTML = links.filter(l => l[3].includes(me.role)).map(l => `<a href="${l[1]}"${l[0] === current ? ' aria-current="page"' : ''}>${l[2]}</a>`).join('') +
     `<a href="/compte.html"${current === 'compte' ? ' aria-current="page"' : ''}>Mon mot de passe</a><span class="who">${esc(me.display_name)}</span><button type="button" class="ghost" id="logoutBtn">Déconnexion</button>`;
@@ -49,8 +49,8 @@ async function staffNav(current) {
 }
 
 /* Grille à tampons identique à la carte papier (5 colonnes de 25, 20, 10, 5 = 300) */
-function aboutHtml() {
-  return `<div class="card about"><h2>Qui sommes-nous ?</h2>
+function aboutHtml(noPhoto) {
+  return `<div class="card about">${noPhoto ? '' : '<img class="about-photo" src="/img/vitrine.jpg" alt="La vitrine de la boutique esprit mode à Maisons-Alfort" loading="lazy">'}<h2>Qui sommes-nous ?</h2>
   <p><b>esprit mode</b> est une enseigne indépendante de prêt-à-porter et d’accessoires implantée à Maisons-Alfort depuis 2008.</p>
   <p>Depuis plus de 15 ans, nous accompagnons nos clientes dans leurs choix de mode, avec une attention particulière portée à l’accueil, au conseil et à la proximité.</p>
   <p>Aujourd’hui, esprit mode compte deux points de vente à Maisons-Alfort, permettant à nos clientes de retrouver notre univers et notre équipe dans deux adresses :</p>
@@ -65,7 +65,8 @@ function stampGrid(points, threshold, prev) {
   if (Number(threshold) !== 300) return '';
   const rows = [25, 20, 10, 5], pts = Math.min(Math.max(points, 0), 300), on = {}, was = {}; let cum = 0;
   const before = prev == null || prev > points ? pts : Math.min(Math.max(prev, 0), 300);
-  for (let c = 0; c < 5; c++) for (let r = 0; r < 4; r++) { cum += rows[r]; on[r + '-' + c] = cum <= pts; was[r + '-' + c] = cum <= before; }
+  // Remplissage des petites cases d'abord (5 €, puis 10 €, 20 €, 25 €) : le premier tampon apparaît dès 5 € d'achat
+  for (let r = 3; r >= 0; r--) for (let c = 0; c < 5; c++) { cum += rows[r]; on[r + '-' + c] = cum <= pts; was[r + '-' + c] = cum <= before; }
   let cells = '', k = 0;
   for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) {
     const id = r + '-' + c, isNew = on[id] && !was[id];
@@ -131,3 +132,22 @@ document.addEventListener('click', async e => {
   _installEvt.prompt(); try { await _installEvt.userChoice; } catch (err) {} _installEvt = null; b.classList.add('hidden');
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+/* Lecture d'un QR code avec la caméra (gratuit). Retourne une fonction pour arrêter. */
+async function startQrScan(video, onText) {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  video.srcObject = stream; await video.play();
+  let detector = null;
+  if ('BarcodeDetector' in window) { try { detector = new BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { detector = null; } }
+  if (!detector && !window.jsQR) await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js'; s.onload = ok; s.onerror = ko; document.head.appendChild(s); });
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true }); let done = false;
+  const timer = setInterval(async () => {
+    if (done || !video.videoWidth) return;
+    let txt = null;
+    if (detector) { try { const r = await detector.detect(video); if (r[0]) txt = r[0].rawValue; } catch (e) {} }
+    else { cv.width = video.videoWidth; cv.height = video.videoHeight; ctx.drawImage(video, 0, 0); const r = window.jsQR(ctx.getImageData(0, 0, cv.width, cv.height).data, cv.width, cv.height); if (r && r.data) txt = r.data; }
+    if (txt && !done) { stop(); onText(txt); }
+  }, 350);
+  function stop() { done = true; clearInterval(timer); stream.getTracks().forEach(t => t.stop()); }
+  return stop;
+}

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#465157">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="style.css"><title>Chèque cadeau — esprit mode</title>
+<style>
+.wrap{max-width:860px;margin:0 auto;padding:16px}
+.cheque{container-type:inline-size;width:100%;min-height:45cqw;display:grid;grid-template-columns:31% 1fr 2.2%;background:#f7f3ee;box-shadow:0 10px 30px #29323730;border-radius:6px;overflow:hidden;color:#2d3538}
+.cheque .left{display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:3cqw 2cqw 3cqw;text-align:center;background:#fbf8f4}
+.mono{position:relative;width:25.5cqw;height:19.5cqw}
+.mono .a{position:absolute;left:0;top:0;width:13cqw;height:12cqw;background:#e7b9a8}
+.mono .b{position:absolute;right:0;bottom:0;width:24cqw;height:18cqw;object-fit:cover;display:block;box-shadow:0 .3cqw 1cqw #0002}
+.left .name{white-space:nowrap;font-size:3.7cqw;letter-spacing:.06em;color:#465157;margin-top:1.4cqw;line-height:1}
+.left .what{font-size:1.75cqw;line-height:1.35;margin-top:1.2cqw}
+.left .contact{font-size:1.65cqw;line-height:1.5}
+.right{display:flex;flex-direction:column}
+.band{background:#465157;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:2cqw;padding:2cqw 2.4cqw 2cqw 3.2cqw}
+.band h1{margin:0;font-weight:400;font-size:3.4cqw;letter-spacing:.12em;white-space:nowrap}
+.band .num{font-size:2.6cqw;letter-spacing:.12em;margin-top:1.2cqw}.band .code{font-size:1.6cqw;letter-spacing:.14em;color:#f0d3c8;margin-top:.5cqw}
+.band .qrb{background:#fff;padding:.6cqw;line-height:0;flex:none}.band .qrb img{width:11cqw;height:11cqw;display:block;overflow:hidden}
+.fields{flex:1;display:grid;grid-template-columns:1fr 34%;grid-auto-rows:auto;row-gap:1.6cqw;column-gap:3cqw;padding:1.6cqw 3.2cqw 2.6cqw}
+.f{display:flex;flex-direction:column;justify-content:flex-end}
+.f .v{font-family:Georgia,serif;font-style:italic;font-size:2.9cqw;color:#2d3538;border-bottom:.18cqw solid #8e9aa3;padding:0 .4cqw .5cqw;min-height:3.6cqw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.f .v.big{font-size:4cqw;font-style:normal;font-weight:600;color:#465157}
+.f .l{font-family:Georgia,serif;font-style:italic;font-size:1.5cqw;color:#697177;margin-top:.3cqw}
+.f.wide{grid-column:1 / span 2}
+.f .sig{font-size:1.5cqw;font-style:normal;font-family:system-ui,sans-serif;color:#697177}
+.strip{background:linear-gradient(180deg,#f0c9b8,#c98d78 55%,#b27a67)}
+.state{margin:14px 0 0;text-align:center}
+.tools{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}.tools button{width:auto}
+.stamp-used{position:relative}.stamp-used::after{content:attr(data-label);position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-14deg);border:.6cqw solid #a12626;color:#a12626;font-weight:800;font-size:6cqw;letter-spacing:.1em;padding:.4cqw 2.4cqw;border-radius:1.2cqw;background:#ffffffb0}
+@media print{
+  @page{size:A4 portrait;margin:12mm}
+  body{background:#fff}.top,.tools,.state,.noprint{display:none!important}.wrap{padding:0;max-width:none}
+  .cheque{width:186mm;box-shadow:none;border:0.3mm dashed #999;border-radius:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .cheque *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style></head>
+<body>
+<header class="top"><span class="brand">esprit mode<small id="sub">chèque cadeau</small></span></header>
+<div class="wrap" id="app"><div class="card">Chargement…</div></div>
+<script src="app.js"></script>
+<script>
+const t = new URLSearchParams(location.search).get('t');
+const endMonth = d => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+(async () => {
+  if (!t) { $('app').innerHTML = '<div class="card"><h2>Chèque introuvable</h2><p>Ouvrez le lien reçu, ou demandez-le en boutique.</p></div>'; return; }
+  let g; try { g = await api('/api/public/gift/' + encodeURIComponent(t)); }
+  catch (e) { $('app').innerHTML = `<div class="card"><h2>${esc(e.message)}</h2><p>Vérifiez le lien, ou contactez la boutique.</p></div>`; return; }
+  const avoir = g.kind === 'avoir';
+  document.title = `${g.kind_label} n° ${g.number_label} — esprit mode`; $('sub').textContent = g.kind_label.toLowerCase();
+  const stLabel = { used: 'UTILISÉ', expired: 'EXPIRÉ', cancelled: 'ANNULÉ' }[g.status];
+  $('app').innerHTML = `
+  <div class="cheque${stLabel ? ' stamp-used' : ''}" ${stLabel ? `data-label="${stLabel}"` : ''} role="img" aria-label="${esc(g.kind_label)} esprit mode de ${euros0(g.amount)}">
+    <div class="left">
+      <div><div class="mono"><div class="a"></div><img class="b" src="/img/vitrine.jpg" alt="La vitrine esprit mode"></div></div>
+      <div><div class="name">esprit mode</div><div class="what">prêt-à-porter féminin<br>bijoux · sacs · accessoires</div></div>
+      <div class="contact">Mobile : 06 62 55 24 87<br>espritmode13@gmail.com</div>
+    </div>
+    <div class="right">
+      <div class="band"><div><h1>${avoir ? 'AVOIR' : 'CHÈQUE CADEAU'}</h1><div class="num">N° ${esc(g.number_label)}</div><div class="code">code ${esc(g.code)}</div></div>
+        <div class="qrb"><img src="/api/public/gift-qr/${encodeURIComponent(t)}" alt="QR code du chèque"></div></div>
+      <div class="fields">
+        <div class="f"><div class="v big">${money(g.amount)}</div><div class="l">montant</div></div>
+        <div class="f"><div class="v">${endMonth(g.expires_at)}</div><div class="l">expire fin</div></div>
+        <div class="f wide"><div class="v">${esc(g.recipient || '')}</div><div class="l">${avoir ? 'au nom de' : 'pour'}</div></div>
+        <div class="f wide"><div class="v">${esc(avoir ? (g.note || '') : (g.from_name || ''))}</div><div class="l">${avoir ? 'motif' : 'de la part de :'}</div></div>
+        <div class="f wide"><div class="v"><span class="sig">Émis par esprit mode le ${fdate(g.created_at)}</span></div><div class="l">signature autorisée :</div></div>
+      </div>
+    </div>
+    <div class="strip"></div>
+  </div>
+  <div class="state">${g.status === 'active'
+    ? (g.balance < g.amount ? `<p class="warn">Déjà utilisé en partie : <b>il reste ${money(g.balance)}</b> à utiliser.</p>` : `<p class="ok">Valable jusqu'au <b>${fdate(g.expires_at)}</b> dans nos deux boutiques. Présentez ce chèque (ou son QR code) en caisse.</p>`)
+    : `<p class="err">${g.status === 'used' ? 'Ce chèque a été entièrement utilisé.' : g.status === 'expired' ? `Ce chèque a expiré le ${fdate(g.expires_at)}.` : 'Ce chèque a été annulé.'}</p>`}</div>
+  <div class="tools"><button id="printBtn">Imprimer</button><button class="secondary" id="shareBtn">Partager</button></div>
+  <p class="small muted noprint" style="text-align:center">${esc(g.kind_label)} non remboursable et non échangeable contre des espèces. <a href="/conditions.html#cheques">Conditions</a></p>`;
+  $('printBtn').addEventListener('click', () => print());
+  $('shareBtn').addEventListener('click', async () => {
+    const data = { title: g.kind_label + ' esprit mode', text: `${g.kind_label} esprit mode de ${euros0(g.amount)}`, url: location.href };
+    try { if (navigator.share) await navigator.share(data); else { await navigator.clipboard.writeText(location.href); toast('Lien copié'); } } catch (e) {}
+  });
+})();
+</script>
+</body></html>

@@ -18,3 +18,6 @@ v1.0 : offres et vidéos de Michelle affichées sur la carte cliente ; envoi gra
 
 ## v1.1
 Options activables (Administration → Options), toutes désactivées par défaut : bonus anniversaire (points choisis par Michelle), e-mails carte pleine / rappel, niveaux, bonus de bienvenue, journée spéciale, sauvegarde hebdo. Scan QR en caisse, ciblage des campagnes, affiche A5 (/affiche.html), import CSV.
+
+## v1.2
+Points hors soldes/promotions (champ en caisse). Chèques cadeaux et avoirs numérotés (/cheques.html, page publique /cheque.html?t=…), encaissement partiel, envoi e-mail, export CSV.

@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.1.2';
+const VERSION = '1.2.2';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -47,11 +47,11 @@ const DEFAULT_OPTIONS = {
   special_day_enabled: false, special_day_multiplier: 2, special_day_label: 'Journée spéciale',
   weekly_backup: false, backup_email: 'espritmode13@gmail.com'
 };
-const SEQ_KEYS = ['customers', 'purchases', 'users', 'rewards', 'redemptions', 'campaigns', 'loyalty_adjustments', 'vouchers', 'audit', 'videos'];
+const SEQ_KEYS = ['customers', 'purchases', 'users', 'rewards', 'redemptions', 'campaigns', 'loyalty_adjustments', 'vouchers', 'audit', 'videos', 'gift_cards'];
 const STORES = ['Général de Gaulle', 'Clemenceau'];
 
 function emptyDb() {
-  return { customers: [], purchases: [], users: [], rewards: [], redemptions: [], loyalty_adjustments: [], campaigns: [], vouchers: [], sessions: [], audit: [], videos: [], email_log: {},
+  return { customers: [], purchases: [], users: [], rewards: [], redemptions: [], loyalty_adjustments: [], campaigns: [], vouchers: [], sessions: [], audit: [], videos: [], gift_cards: [], email_log: {},
     settings: { ...DEFAULT_SETTINGS }, seq: Object.fromEntries(SEQ_KEYS.map(k => [k, 1])), migrations: {} };
 }
 function normalizeDb(x) {
@@ -61,6 +61,7 @@ function normalizeDb(x) {
   d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
   d.settings.options = { ...DEFAULT_OPTIONS, ...((d.settings && d.settings.options) || {}) };
   d.meta = d.meta || {};
+  for (const k of ['cadeau', 'avoir']) { let n = (d.gift_cards || []).filter(g => g.kind === k).reduce((m, g) => Math.max(m, g.number || 0), 0); for (const g of (d.gift_cards || [])) if (g.kind === k && !g.number) g.number = ++n; }
   d.seq = { ...base.seq, ...(d.seq || {}) };
   d.migrations = d.migrations || {};
   d.email_log = d.email_log && typeof d.email_log === 'object' && !Array.isArray(d.email_log) ? d.email_log : {};
@@ -536,14 +537,17 @@ app.post('/api/purchases', auth, salesOnly, tx(req => {
   const ids = Array.isArray(x.voucher_ids) ? x.voucher_ids.map(Number) : [];
   const used = ids.map(id => db.vouchers.find(v => v.id === id && v.customer_id === c.id));
   if (used.some(v => !v || voucherStatus(v) !== 'active')) bad('Un des bons n’est plus utilisable. Rechargez la fiche.');
-  const cents = Math.round(amount * 100), points = pointsForCents(cents), t = nowIso();
+  const excl = x.excluded_amount === undefined || x.excluded_amount === '' ? 0 : Number(String(x.excluded_amount).replace(',', '.'));
+  if (!Number.isFinite(excl) || excl < 0) bad('Montant soldé / en promotion invalide.');
+  if (excl > amount + 0.001) bad('Le montant soldé / en promotion ne peut pas dépasser le montant payé.');
+  const cents = Math.round(amount * 100), excluded_cents = Math.min(cents, Math.round(excl * 100)), points = pointsForCents(cents - excluded_cents), t = nowIso();
   for (const v of used) { v.status = 'used'; v.used_at = t; v.used_by = req.user.username; }
   const store = STORES.includes(x.store) ? x.store : '';
-  const p = { id: nextId('purchases'), customer_id: c.id, amount_cents: cents, points, created_at: t, by_user: req.user.username, store, vouchers_used: used.map(v => v.id) };
+  const p = { id: nextId('purchases'), customer_id: c.id, amount_cents: cents, excluded_cents, points, created_at: t, by_user: req.user.username, store, vouchers_used: used.map(v => v.id) };
   db.purchases.push(p);
   c.points += points;
   const made = autoVouchers(c, req.user);
-  return { id: p.id, points: c.points, added: points, vouchers_used: used.map(publicVoucher), vouchers_created: made.map(publicVoucher), first_name: c.first_name, last_name: c.last_name };
+  return { id: p.id, points: c.points, added: points, excluded: excluded_cents / 100, vouchers_used: used.map(publicVoucher), vouchers_created: made.map(publicVoucher), first_name: c.first_name, last_name: c.last_name };
 }));
 app.post('/api/purchases/:id/cancel', auth, managerOnly, tx(req => {
   const p = db.purchases.find(x => x.id === Number(req.params.id)); if (!p || p.cancelled) bad('Achat introuvable ou déjà annulé.', 404);
@@ -597,6 +601,7 @@ app.get('/api/dashboard', auth, adminOnly, read(() => {
     vouchers_active: db.vouchers.filter(v => voucherStatus(v) === 'active').length, vouchers_expired: db.vouchers.filter(v => voucherStatus(v) === 'expired').length,
     near_reward: customers.filter(c => c.points >= S().threshold - 50).length,
     birthdays_week: customers.filter(c => birthdayIn(c, 6) !== null).length,
+    gifts_active: db.gift_cards.filter(g => giftStatus(g) === 'active').length, gifts_outstanding: db.gift_cards.filter(g => giftStatus(g) === 'active').reduce((n, g) => n + g.balance_cents, 0) / 100,
     by_store: [...STORES, ''].map(st => ({ store: st || 'Non précisée', ca_month: purchases.filter(x => (x.store || '') === st && ts(x) >= startMonth).reduce((n, x) => n + x.amount_cents, 0) / 100,
       sales_month: purchases.filter(x => (x.store || '') === st && ts(x) >= startMonth).length })).filter(r => r.store !== 'Non précisée' || r.sales_month > 0),
     deletion_requests: customers.filter(c => c.deletion_requested_at).map(c => ({ id: c.id, name: `${c.first_name} ${c.last_name}`, at: c.deletion_requested_at }))
@@ -623,10 +628,126 @@ app.post('/api/admin/reset', auth, adminOnly, tx(req => {
   for (const c of db.customers) c.points = 0;
   if (x.campaigns) { n.campagnes = db.campaigns.length; db.campaigns = []; }
   if (x.customers) { n.clientes = db.customers.length; db.customers = []; }
+  if (x.gifts) { n.cheques = db.gift_cards.length; db.gift_cards = []; }
   db.email_log = {};
   audit(req.user, 'remise_a_zero', JSON.stringify(n));
   return n;
 }));
+/* ======================= Chèques cadeaux et avoirs ======================= */
+const GIFT_KINDS = { cadeau: 'Chèque cadeau', avoir: 'Avoir' };
+const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function newGiftCode() {
+  for (;;) { const b = crypto.randomBytes(8); let s = ''; for (let i = 0; i < 8; i++) s += CODE_ALPHA[b[i] % CODE_ALPHA.length];
+    const code = `EM-${s.slice(0, 4)}-${s.slice(4)}`; if (!db.gift_cards.some(g => g.code === code)) return code; }
+}
+function giftStatus(g) {
+  if (g.status === 'cancelled') return 'cancelled';
+  if (g.balance_cents <= 0) return 'used';
+  return new Date(g.expires_at).getTime() < Date.now() ? 'expired' : 'active';
+}
+function giftNumber(g) { return (g.kind === 'avoir' ? 'A-' : '') + String(g.number || 0).padStart(4, '0'); }
+function giftUrl(g, req) { return `${baseUrl(req)}/cheque.html?t=${encodeURIComponent(g.token)}`; }
+function publicGift(g) {
+  return { kind: g.kind, kind_label: GIFT_KINDS[g.kind] || 'Chèque cadeau', number: g.number, number_label: giftNumber(g), code: g.code, amount: g.amount_cents / 100, balance: g.balance_cents / 100, expires_at: g.expires_at,
+    recipient: g.recipient, from_name: g.from_name, note: g.kind === 'avoir' ? g.note : '', created_at: g.created_at, status: giftStatus(g) };
+}
+function staffGift(g, req) { return { id: g.id, ...publicGift(g), email: g.email, note: g.note, created_by: g.created_by, uses: g.uses || [], cancelled_at: g.cancelled_at || null, email_sent_at: g.email_sent_at || null, url: giftUrl(g, req), token: g.token }; }
+function giftById(id) { const g = db.gift_cards.find(x => x.id === Number(id)); if (!g) bad('Chèque introuvable', 404); return g; }
+function endOfDay(d) { const x = new Date(d + 'T23:59:59'); return isNaN(x) ? null : x; }
+app.post('/api/gifts', auth, salesOnly, tx(req => {
+  const x = req.body || {}; const kind = GIFT_KINDS[x.kind] ? x.kind : 'cadeau';
+  const amount = Number(String(x.amount).replace(',', '.'));
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 5000) bad('Montant invalide (entre 1 et 5 000 €).');
+  const exp = endOfDay(validDate(x.expires_on));
+  if (!exp) bad("Indiquez la date de fin de validité.");
+  if (exp.getTime() < Date.now()) bad('La date de fin de validité est déjà passée.');
+  if (exp.getTime() > Date.now() + 3 * 366 * DAY) bad('Validité maximale : 3 ans.');
+  const email = clean(x.email, 120).toLowerCase(); if (email && !validEmail(email)) bad("L'adresse e-mail semble incomplète.");
+  const recipient = clean(x.recipient, 80); if (kind === 'avoir' && !recipient) bad("Indiquez au nom de quelle cliente est établi l'avoir.");
+  const cents = Math.round(amount * 100);
+  const number = db.gift_cards.filter(x => x.kind === kind).reduce((n, x) => Math.max(n, x.number || 0), 0) + 1;
+  const g = { id: nextId('gift_cards'), kind, number, code: newGiftCode(), token: newToken(), amount_cents: cents, balance_cents: cents, recipient, from_name: clean(x.from_name, 80),
+    email, note: clean(x.note, 200), store: STORES.includes(x.store) ? x.store : '', created_at: nowIso(), expires_at: exp.toISOString(), created_by: req.user.username, status: 'active', uses: [] };
+  db.gift_cards.push(g);
+  audit(req.user, kind === 'avoir' ? 'creation_avoir' : 'creation_cheque_cadeau', `n° ${giftNumber(g)} ${amount.toFixed(2)} €`);
+  return staffGift(g, req);
+}));
+app.get('/api/gifts', auth, salesOnly, read(req => {
+  const q = String(req.query.q || '').trim().toLowerCase(), st = String(req.query.status || '');
+  let a = db.gift_cards.slice().sort((x, y) => y.created_at.localeCompare(x.created_at));
+  if (q) a = a.filter(g => [g.code, giftNumber(g), g.recipient, g.from_name, g.email].some(v => String(v || '').toLowerCase().includes(q)));
+  if (st) a = a.filter(g => giftStatus(g) === st);
+  return a.slice(0, 200).map(g => staffGift(g, req));
+}));
+app.get('/api/gifts/lookup/:code', auth, salesOnly, read(req => {
+  const raw = String(req.params.code || '').trim(); const tok = (raw.match(/t=([a-f0-9]{20,})/i) || [])[1];
+  const code = raw.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^EM/, '');
+  // Recherche par lien / QR, par code de sécurité (EM-XXXX-XXXX) ou par numéro (0012 = chèque cadeau n° 12, A-0012 = avoir n° 12)
+  const num = raw.match(/^\s*(A|AV|AVOIR)?\s*[-n°º#\s]*0*(\d{1,6})\s*$/i);
+  const g = db.gift_cards.find(x => (tok && x.token === tok) || (code.length === 8 && x.code === `EM-${code.slice(0, 4)}-${code.slice(4)}`)) ||
+    (num ? db.gift_cards.find(x => x.kind === (num[1] ? 'avoir' : 'cadeau') && x.number === Number(num[2])) : null);
+  if (!g) bad('Aucun chèque cadeau ou avoir ne correspond à ce code.', 404);
+  return staffGift(g, req);
+}));
+app.post('/api/gifts/:id/use', auth, salesOnly, tx(req => {
+  const g = giftById(req.params.id); const st = giftStatus(g);
+  if (st !== 'active') bad(st === 'expired' ? 'Ce chèque a expiré le ' + new Date(g.expires_at).toLocaleDateString('fr-FR') + '.' : st === 'used' ? 'Ce chèque a déjà été entièrement utilisé.' : 'Ce chèque a été annulé.');
+  const amount = Number(String((req.body || {}).amount).replace(',', '.'));
+  if (!Number.isFinite(amount) || amount <= 0) bad('Montant invalide.');
+  const cents = Math.round(amount * 100); if (cents > g.balance_cents) bad(`Le montant dépasse le solde disponible (${(g.balance_cents / 100).toFixed(2).replace('.', ',')} €).`);
+  g.balance_cents -= cents;
+  g.uses.push({ at: nowIso(), amount: cents / 100, by: req.user.username, store: STORES.includes((req.body || {}).store) ? req.body.store : '' });
+  audit(req.user, 'encaissement_cheque', `${g.code} ${(cents / 100).toFixed(2)} € (reste ${(g.balance_cents / 100).toFixed(2)} €)`);
+  return staffGift(g, req);
+}));
+app.post('/api/gifts/:id/cancel', auth, managerOnly, tx(req => {
+  const g = giftById(req.params.id); if (g.status === 'cancelled') bad('Déjà annulé.');
+  g.status = 'cancelled'; g.cancelled_at = nowIso(); g.cancelled_by = req.user.username;
+  audit(req.user, 'annulation_cheque', g.code);
+  return staffGift(g, req);
+}));
+function giftMailHtml(g) {
+  const url = giftUrl(g, null), label = GIFT_KINDS[g.kind] || 'Chèque cadeau', val = (g.amount_cents / 100).toLocaleString('fr-FR') + ' €';
+  return `<div style="background:#f7f3ee;padding:24px 12px;font-family:Arial,sans-serif;color:#222"><div style="max-width:560px;margin:auto;background:#fff;border-radius:16px;overflow:hidden">
+    <div style="background:#465157;color:#fff;padding:22px;font-size:26px;letter-spacing:2px">esprit mode</div>
+    <div style="padding:22px;font-size:16px;line-height:1.5">
+    <p>Bonjour${g.recipient ? ' ' + eH(g.recipient) : ''},</p>
+    <p>${g.kind === 'avoir' ? `Voici votre <b>avoir de ${val}</b> esprit mode.` : `Vous avez reçu un <b>chèque cadeau esprit mode de ${val}</b>${g.from_name ? ` de la part de <b>${eH(g.from_name)}</b>` : ''} !`}</p>
+    <p>Il est valable jusqu'au <b>${new Date(g.expires_at).toLocaleDateString('fr-FR')}</b> dans nos deux boutiques. N° <b>${giftNumber(g)}</b> — code : <b style="letter-spacing:1px">${g.code}</b></p>
+    <p><a href="${url}" style="display:inline-block;background:#465157;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">Voir mon ${label.toLowerCase()}</a></p>
+    <p style="font-size:13px;color:#697177">Présentez ce lien ou son QR code en boutique. Si le bouton ne répond pas : <a href="${url}" style="color:#465157;word-break:break-all">${url}</a></p></div>
+    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 59 av. du Général de Gaulle et 47 av. Georges Clemenceau, 94700 Maisons-Alfort — Michelle : 06 62 55 24 87 — <a href="${baseUrl(null)}/conditions.html#cheques" style="color:#697177">Conditions</a></div></div></div>`;
+}
+app.post('/api/gifts/:id/email', auth, salesOnly, async (req, res) => {
+  try {
+    const g = giftById(req.params.id);
+    const email = clean((req.body || {}).email || g.email, 120).toLowerCase();
+    if (!email || !validEmail(email)) bad("Indiquez une adresse e-mail valide.");
+    if (!brevoReady()) bad("L'envoi d'e-mails n'est pas activé.");
+    if (emailsLeft() < 1) bad("Limite gratuite d'e-mails atteinte pour aujourd'hui. Réessayez demain.", 429);
+    const label = GIFT_KINDS[g.kind] || 'Chèque cadeau';
+    await brevoSend({ email, first_name: g.recipient || '', last_name: '' }, g.kind === 'avoir' ? `Votre avoir esprit mode de ${g.amount_cents / 100} €` : `Un chèque cadeau esprit mode de ${g.amount_cents / 100} € pour vous`, giftMailHtml(g));
+    const k = todayKey(); db.email_log = { [k]: (Number(db.email_log[k]) || 0) + 1 };
+    g.email = email; g.email_sent_at = nowIso(); audit(req.user, 'envoi_cheque', `${g.code} → ${email}`);
+    await persist(); res.json(staffGift(g, req));
+  } catch (e) {
+    if (e instanceof HttpError) res.status(e.status).json({ error: e.message });
+    else { console.error(e); res.status(502).json({ error: "L'e-mail n'a pas pu partir : " + e.message }); }
+  }
+});
+app.get('/api/public/gift/:token', read(req => { const g = db.gift_cards.find(x => x.token === req.params.token); if (!g) bad('Chèque introuvable.', 404); return publicGift(g); }));
+app.get('/api/public/gift-qr/:token', async (req, res) => {
+  const g = db.gift_cards.find(x => x.token === req.params.token); if (!g) return res.status(404).end();
+  try { res.type('png').send(await QRCode.toBuffer(giftUrl(g, req), { width: 320, margin: 1 })); } catch (e) { res.status(500).end(); }
+});
+app.get('/api/export/gifts.csv', auth, adminOnly, (req, res) => {
+  audit(req.user, 'export_cheques', ''); persist().catch(() => {});
+  sendCsv(res, 'esprit-mode-cheques-cadeaux-avoirs.csv', [['Type', 'Numéro', 'Code', 'Montant', 'Solde', 'Statut', 'Pour', 'De la part de / motif', 'Créé le', 'Par', 'Fin de validité', 'Encaissements'],
+    ...db.gift_cards.map(g => [GIFT_KINDS[g.kind], giftNumber(g), g.code, (g.amount_cents / 100).toFixed(2).replace('.', ','), (g.balance_cents / 100).toFixed(2).replace('.', ','),
+      { active: 'en cours', used: 'utilisé', expired: 'expiré', cancelled: 'annulé' }[giftStatus(g)], g.recipient, g.kind === 'avoir' ? g.note : g.from_name, g.created_at, g.created_by, g.expires_at,
+      (g.uses || []).map(u => `${u.at.slice(0, 10)} ${u.amount} €`).join(' | ')])]);
+});
+
 /* ---- Options (Administration) ---- */
 app.get('/api/options', auth, salesOnly, (req, res) => res.json({ ...O(), email_ready: brevoReady() }));
 app.post('/api/options', auth, adminOnly, tx(req => {
@@ -713,8 +834,8 @@ function customersCsv() {
 }
 function purchasesCsv() {
   const names = Object.fromEntries(db.customers.map(c => [c.id, c]));
-  return csv([['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Points', 'Boutique', 'Par', 'Annulé'],
-    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), p.points, p.store || '', p.by_user, p.cancelled ? 'oui' : 'non']; })]);
+  return csv([['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Dont soldé/promo', 'Points', 'Boutique', 'Par', 'Annulé'],
+    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), ((p.excluded_cents || 0) / 100).toFixed(2).replace('.', ','), p.points, p.store || '', p.by_user, p.cancelled ? 'oui' : 'non']; })]);
 }
 app.get('/api/export/customers.csv', auth, adminOnly, async (req, res) => {
   audit(req.user, 'export_clientes', ''); persist().catch(() => {});
@@ -724,8 +845,8 @@ app.get('/api/export/customers.csv', auth, adminOnly, async (req, res) => {
 });
 app.get('/api/export/purchases.csv', auth, adminOnly, async (req, res) => {
   const names = Object.fromEntries(db.customers.map(c => [c.id, c]));
-  sendCsv(res, 'esprit-mode-achats.csv', [['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Points', 'Boutique', 'Par', 'Annulé'],
-    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), p.points, p.store || '', p.by_user, p.cancelled ? 'oui' : 'non']; })]);
+  sendCsv(res, 'esprit-mode-achats.csv', [['Date', 'Prénom', 'Nom', 'Téléphone', 'Montant', 'Dont soldé/promo', 'Points', 'Boutique', 'Par', 'Annulé'],
+    ...db.purchases.map(p => { const c = names[p.customer_id] || {}; return [p.created_at, c.first_name || 'anonyme', c.last_name || '', c.phone || '', (p.amount_cents / 100).toFixed(2).replace('.', ','), ((p.excluded_cents || 0) / 100).toFixed(2).replace('.', ','), p.points, p.store || '', p.by_user, p.cancelled ? 'oui' : 'non']; })]);
 });
 
 /* ======================= Campagnes (consentement obligatoire) ======================= */
