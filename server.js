@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -295,6 +295,7 @@ app.post('/api/public/register', tx(req => {
   const c = { id: nextId('customers'), ...d, marketing_email_at: d.marketing_email ? t : null, marketing_sms_at: d.marketing_sms ? t : null,
     terms_accepted_at: t, points: 0, public_token: newToken(), created_at: t, source: 'cliente' };
   db.customers.push(c);
+  setTimeout(() => sendWelcome(c, req), 500);
   return { token: c.public_token };
 }));
 
@@ -422,6 +423,7 @@ app.post('/api/customers', auth, salesOnly, tx(req => {
   const c = { id: nextId('customers'), ...d, marketing_email_at: d.marketing_email ? t : null, marketing_sms_at: d.marketing_sms ? t : null,
     terms_accepted_at: t, points: 0, public_token: newToken(), created_at: t, source: 'boutique', created_by: req.user.username };
   db.customers.push(c);
+  setTimeout(() => sendWelcome(c, req), 500);
   return customerSummary(c);
 }));
 function customerById(id) { const c = db.customers.find(x => x.id === Number(id) && !x.deleted); if (!c) bad('Cliente introuvable', 404); return c; }
@@ -658,6 +660,22 @@ async function brevoSend(to, subject, html) {
     body: JSON.stringify({ sender: { email: process.env.BREVO_SENDER_EMAIL, name: process.env.BREVO_SENDER_NAME || 'esprit mode' }, to: [{ email: to.email, name: `${to.first_name} ${to.last_name}` }], subject, htmlContent: html })
   });
   if (!r.ok) { let m = ''; try { m = (await r.json()).message || ''; } catch (e) {} throw new Error(`Brevo ${r.status} ${m}`); }
+}
+function welcomeHtml(c, req) {
+  const e = s => String(s || '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+  return `<div style="background:#f7f3ee;padding:24px 12px;font-family:Arial,sans-serif;color:#222"><div style="max-width:560px;margin:auto;background:#fff;border-radius:16px;overflow:hidden">
+    <div style="background:#465157;color:#fff;padding:22px;font-size:26px;letter-spacing:2px">esprit mode</div>
+    <div style="padding:22px;font-size:16px;line-height:1.5"><p>Bonjour ${e(c.first_name)},</p><p>Bienvenue chez esprit mode ! Votre carte de fidélité est créée : 1 € dépensé = 1 point, et à ${S().threshold} points un bon d'achat de ${S().voucher_value_cents / 100} € vous est offert.</p>
+    <p><a href="${cardUrl(c, req)}" style="display:inline-block;background:#465157;color:#fff;padding:12px 18px;border-radius:10px;text-decoration:none">Ouvrir ma carte de fidélité</a></p>
+    <p style="font-size:14px;color:#697177">Sur iPhone, ouvrez ce lien dans Safari puis Partager → « Sur l'écran d'accueil ». Sur Android, Chrome propose « Installer l'application ».</p></div>
+    <div style="padding:16px 22px;font-size:12px;color:#697177;border-top:1px solid #e7ded6">esprit mode — 47 av. Georges Clemenceau et 59 av. du Général de Gaulle, 94700 Maisons-Alfort — 06 62 55 24 87</div></div></div>`;
+}
+// E-mail de bienvenue (message de service, pas de la publicité) : envoyé en arrière-plan si Brevo est activé
+function sendWelcome(c, req) {
+  if (!brevoReady() || !c.email || emailsLeft() < 1) return;
+  brevoSend(c, 'Votre carte de fidélité esprit mode', welcomeHtml(c, req))
+    .then(() => { const k = todayKey(); db.email_log = { [k]: (Number(db.email_log[k]) || 0) + 1 }; return persist(); })
+    .catch(err => console.error('E-mail de bienvenue :', err.message));
 }
 let sending = false;
 app.post('/api/campaigns/:id/send-email', auth, managerOnly, async (req, res) => {

@@ -91,7 +91,7 @@ function renderProfile() {
     ${P.purchases.length ? `<div class="tablewrap"><table><tr><th>Date</th><th>Montant</th><th>Points</th><th>Par</th><th></th></tr>${P.purchases.map(x => `<tr class="${x.cancelled ? 'cancelled' : ''}"><td>${fdt(x.created_at)}</td><td>${money(x.amount)}</td><td>+${x.points}</td><td>${esc(x.by_user || '—')}${x.store ? '<div class="small muted">' + esc(x.store) + '</div>' : ''}</td><td class="keep">${x.cancelled ? '<span class="tag">annulé</span>' : `<button class="small danger" data-pcancel="${x.id}">Annuler</button>`}</td></tr>`).join('')}</table></div>` : '<p class="muted small">Aucun achat.</p>'}
     ${P.redemptions.length ? '<h3>Récompenses utilisées (ancien système)</h3>' + P.redemptions.map(r => `<div class="small">${fdate(r.created_at)} · ${esc(r.name)} · ${r.points_used} pts · ${esc(r.by_user || '')}</div>`).join('') : ''}
     ${P.adjustments.length ? '<h3>Ajustements</h3>' + P.adjustments.map(a => `<div class="small">${fdate(a.created_at)} · ${a.delta > 0 ? '+' : ''}${a.delta} pts · ${esc(a.reason)} · ${esc(a.by_user)}</div>`).join('') : ''}
-    <h3>Lien de sa carte</h3><img class="qr" alt="QR code" src="/api/public/qr/${encodeURIComponent(P.card_url.split('token=')[1] || '')}">`;
+    <h3>Lien de sa carte</h3>${cardLinkButtons(c, P.card_url)}<img class="qr" alt="QR code" src="/api/public/qr/${encodeURIComponent(P.card_url.split('token=')[1] || '')}">`;
   $('closeP').addEventListener('click', () => $('profile').classList.add('hidden'));
   $('edit').addEventListener('submit', saveEdit);
   $('adjBtn').addEventListener('click', adjust);

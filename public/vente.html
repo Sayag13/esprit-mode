@@ -89,7 +89,8 @@ function showClient() {
       <p class="small muted">Saisissez le total tamponné sur sa carte papier (en euros).</p>
       <div class="row"><input id="paperAmt" inputmode="numeric" placeholder="ex. 180"><button type="button" class="small auto" id="paperBtn">Ajouter les points</button></div></details>
     <details><summary class="small"><b>Donner le lien de sa carte</b></summary>
-      <p class="small muted">La cliente scanne ce QR code avec l'appareil photo de son téléphone.</p>
+      <p class="small muted">Envoyez-lui le lien sur son téléphone (conseillé sur iPhone : il s'ouvrira dans Safari), ou faites-lui scanner ce QR code.</p>
+      ${cardLinkButtons(c, CUR.card_url)}
       <img class="qr" alt="QR code de la carte" src="/api/public/qr/${encodeURIComponent(CUR.card_url.split('token=')[1] || '')}"></details>`;
   $('amount').addEventListener('input', preview); preview(); $('amount').focus();
   $('buy').addEventListener('submit', buy);

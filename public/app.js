@@ -71,15 +71,44 @@ async function shareApp(msgEl) {
 let _installEvt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); _installEvt = e; document.querySelectorAll('[data-install-android]').forEach(b => b.classList.remove('hidden')); });
 function isStandalone() { return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true; }
+function browserKind() {
+  const ua = navigator.userAgent;
+  const ios = /iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const inApp = /FBAN|FBAV|Instagram|Line\/|WhatsApp|Snapchat|GSA\//i.test(ua);
+  const otherIos = ios && /CriOS|FxiOS|EdgiOS|OPiOS|GSA\//i.test(ua);
+  return { ios, inApp, otherIos, android: /android/i.test(ua) };
+}
 function installBox(label) {
   if (isStandalone()) return '<p class="ok">Vous utilisez l\'application esprit mode installée sur votre téléphone.</p>';
-  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const k = browserKind();
   const shareIcon = '<svg width="16" height="20" viewBox="0 0 16 20" style="vertical-align:-4px" aria-label="Partager"><path d="M8 1v12M4 5l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 8H2v11h12V8h-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
-  return `<div class="row" style="gap:12px;align-items:center;margin:8px 0"><img src="/icons/apple-touch-icon.png" alt="" width="56" height="56" style="border-radius:13px;flex:none"><div style="flex:1 1 200px"><b>${label}</b><div class="small muted">L'icône esprit mode apparaîtra sur votre écran d'accueil.</div></div></div>
-    <button type="button" class="${_installEvt ? '' : 'hidden'}" data-install-android>Installer l'application</button>
-    ${ios ? `<ol class="small" style="padding-left:18px;margin:8px 0"><li>Ouvrez cette page dans <b>Safari</b>.</li><li>Touchez le bouton <b>Partager</b> ${shareIcon} en bas de l'écran.</li><li>Choisissez <b>« Sur l'écran d'accueil »</b>, puis <b>Ajouter</b>.</li></ol>`
-      : `<p class="small muted" data-android-help>Si le bouton n'apparaît pas : dans Chrome, touchez le menu ⋮ puis <b>« Installer l'application »</b> ou <b>« Ajouter à l'écran d'accueil »</b>.</p>`}`;
+  const head = `<div class="row" style="gap:12px;align-items:center;margin:8px 0"><img src="/icons/apple-touch-icon.png" alt="" width="56" height="56" style="border-radius:13px;flex:none"><div style="flex:1 1 200px"><b>${label}</b><div class="small muted">L'icône esprit mode apparaîtra sur votre écran d'accueil.</div></div></div>`;
+  if (k.otherIos || (k.ios && k.inApp)) return head + `<p class="warn small">Cette page est ouverte dans une autre application que Safari : l'installation n'y est pas possible.</p>
+    <ol class="small" style="padding-left:18px;margin:8px 0"><li>Touchez <b>Copier le lien</b> ci-dessous.</li><li>Ouvrez <b>Safari</b> (la boussole bleue), touchez la barre d'adresse puis <b>Coller et accéder</b>.</li><li>Dans Safari, touchez <b>Partager</b> ${shareIcon} (en bas, ou dans le menu <b>⋯</b>), puis <b>« Sur l'écran d'accueil »</b> et <b>Ajouter</b>.</li></ol>
+    <button type="button" data-copy-url>Copier le lien</button>`;
+  if (k.ios) return head + `<ol class="small" style="padding-left:18px;margin:8px 0"><li>Touchez <b>Partager</b> ${shareIcon} en bas de l'écran. S'il n'est pas visible, touchez d'abord <b>⋯</b> (trois points, en bas à droite).</li><li>Faites défiler et choisissez <b>« Sur l'écran d'accueil »</b>.</li><li>Laissez « Ouvrir en tant qu'app web » activé, puis touchez <b>Ajouter</b>.</li></ol>`;
+  if (k.android && k.inApp) return head + `<p class="warn small">Cette page est ouverte dans une autre application. Touchez le menu ⋮ puis <b>« Ouvrir dans Chrome »</b>, ou copiez le lien et collez-le dans Chrome.</p><button type="button" data-copy-url>Copier le lien</button>`;
+  return head + `<button type="button" class="${_installEvt ? '' : 'hidden'}" data-install-android>Installer l'application</button>
+    <p class="small muted">Si le bouton n'apparaît pas : dans Chrome, touchez le menu ⋮ puis <b>« Installer l'application »</b> ou <b>« Ajouter à l'écran d'accueil »</b>.</p>`;
 }
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-copy-url]'); if (!b) return;
+  try { await navigator.clipboard.writeText(location.href); b.textContent = 'Lien copié ✓ — collez-le dans Safari'; }
+  catch (err) { prompt('Copiez ce lien :', location.href); }
+});
+/* Envoi du lien de la carte à une cliente (message de service, depuis le téléphone de la boutique) */
+function cardLinkButtons(c, url) {
+  const intl = String(c.phone || '').replace(/\D/g, '').replace(/^0/, '33');
+  const text = `Bonjour ${c.first_name}, voici votre carte de fidélité esprit mode : ${url}\nAjoutez-la à l'écran d'accueil de votre téléphone. À bientôt !`;
+  const btn = 'display:inline-block;background:var(--ink);color:#fff;border-radius:10px;padding:9px 12px;text-decoration:none;font-size:14px;margin:3px';
+  return `<div class="row" style="gap:4px"><a style="${btn}" href="sms:+${intl}?&body=${encodeURIComponent(text)}">Envoyer par SMS</a>
+    <a style="${btn}" href="https://wa.me/${intl}?text=${encodeURIComponent(text)}" target="_blank" rel="noopener">Envoyer par WhatsApp</a>
+    <button type="button" class="small secondary auto" data-copy-text="${esc(url)}">Copier le lien</button></div>`;
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-copy-text]'); if (!b) return;
+  try { await navigator.clipboard.writeText(b.dataset.copyText); toast('Lien copié'); } catch (err) { prompt('Copiez ce lien :', b.dataset.copyText); }
+});
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-install-android]'); if (!b || !_installEvt) return;
   _installEvt.prompt(); try { await _installEvt.userChoice; } catch (err) {} _installEvt = null; b.classList.add('hidden');
