@@ -45,6 +45,12 @@
     <p class="small muted">Pour un compte « mot de passe à définir » : cliquez sur <b>Nouveau mot de passe</b> et communiquez-le à la personne. Ensuite, chacun peut le changer dans « Mon mot de passe ».</p>
   </div>
 
+  <div class="card"><h2>Remise à zéro avant l'ouverture</h2>
+    <p class="small muted">Efface tous les <b>achats</b>, <b>bons d'achat</b> et <b>ajustements de points</b> faits pendant les essais, et remet les points des clientes à 0. L'équipe, les mots de passe et la règle de fidélité sont conservés. <b>Action définitive.</b></p>
+    <label class="check"><input type="checkbox" id="rzCamp"> <span>Effacer aussi les campagnes de test</span></label>
+    <label class="check"><input type="checkbox" id="rzCust"> <span>Effacer aussi toutes les clientes</span></label>
+    <div class="row"><input id="rzConfirm" placeholder="Tapez EFFACER pour confirmer" autocomplete="off"><button type="button" class="danger small auto" id="rzBtn">Remettre à zéro</button></div>
+    <div id="rzMsg"></div></div>
   <div class="card"><h2>Journal des actions sensibles</h2><div id="audit" class="small">Chargement…</div></div>
 </main>
 <script src="app.js"></script>
@@ -116,6 +122,14 @@ $('newUser').addEventListener('submit', async e => {
   try { await api('/api/users', { method: 'POST', body: { username: $('un').value, password: $('up').value, display_name: $('ud').value, role: $('ur').value } });
     $('nuMsg').className = 'ok'; $('nuMsg').textContent = 'Accès créé. Communiquez l\'identifiant et le mot de passe à la personne.'; ['un', 'up', 'ud'].forEach(i => $(i).value = ''); users(); }
   catch (err) { $('nuMsg').className = 'err'; $('nuMsg').textContent = err.message; }
+});
+$('rzBtn').addEventListener('click', async () => {
+  if ($('rzConfirm').value.trim() !== 'EFFACER') { $('rzMsg').className = 'err'; $('rzMsg').textContent = 'Tapez EFFACER en majuscules dans la case pour confirmer.'; return; }
+  if (!confirm('Effacer définitivement les achats et les bons d\'essai ?')) return;
+  try { const n = await api('/api/admin/reset', { method: 'POST', body: { confirm: 'EFFACER', campaigns: $('rzCamp').checked, customers: $('rzCust').checked } });
+    $('rzMsg').className = 'ok'; $('rzMsg').textContent = `Remise à zéro faite : ${n.achats} achat(s) et ${n.bons} bon(s) effacés${n.campagnes !== undefined ? ', ' + n.campagnes + ' campagne(s)' : ''}${n.clientes !== undefined ? ', ' + n.clientes + ' cliente(s)' : ''}.`;
+    $('rzConfirm').value = ''; dashboard(); search(); auditLog(); }
+  catch (err) { $('rzMsg').className = 'err'; $('rzMsg').textContent = err.message; }
 });
 async function auditLog() {
   try { const d = await api('/api/audit'); $('audit').innerHTML = d.slice(0, 50).map(a => `<div>${fdt(a.at)} · ${esc(a.by)} · ${esc(a.action)} · ${esc(a.detail)}</div>`).join('') || 'Rien pour le moment.'; } catch (e) {}

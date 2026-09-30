@@ -19,7 +19,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const { Pool } = require('pg');
 
-const VERSION = '1.0.6';
+const VERSION = '1.0.7';
 const app = express();
 app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000), HOST = '0.0.0.0';
@@ -570,6 +570,19 @@ app.post('/api/settings', auth, adminOnly, tx(req => {
   db.settings = { points_per_euro: ppe, threshold: th, voucher_value_cents: Math.round(val * 100), voucher_validity_days: days, auto_voucher: !!x.auto_voucher, voucher_conditions: clean(x.voucher_conditions, 300) };
   audit(req.user, 'reglages', JSON.stringify(db.settings));
   return { ...S(), voucher_value: S().voucher_value_cents / 100 };
+}));
+// Remise à zéro avant l'ouverture : efface l'historique d'essai (achats, bons, ajustements), garde clientes, équipe et réglages
+app.post('/api/admin/reset', auth, adminOnly, tx(req => {
+  const x = req.body || {};
+  if (x.confirm !== 'EFFACER') bad('Tapez EFFACER en majuscules pour confirmer.');
+  const n = { achats: db.purchases.length, bons: db.vouchers.length };
+  db.purchases = []; db.vouchers = []; db.loyalty_adjustments = []; db.redemptions = [];
+  for (const c of db.customers) c.points = 0;
+  if (x.campaigns) { n.campagnes = db.campaigns.length; db.campaigns = []; }
+  if (x.customers) { n.clientes = db.customers.length; db.customers = []; }
+  db.email_log = {};
+  audit(req.user, 'remise_a_zero', JSON.stringify(n));
+  return n;
 }));
 app.get('/api/audit', auth, adminOnly, read(() => db.audit.slice(-200).reverse()));
 
